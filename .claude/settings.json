@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://localhost:3456/ -o /tmp/dash.html)",
+      "Read(//tmp/**)",
+      "Bash(npx eslint *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3456/)",
+      "Bash(\"/c/Program Files \\(x86\\)/Microsoft/Edge/Application/msedge.exe\" --headless=new --disable-gpu --window-size=1920,1080 --screenshot=\"C:\\\\Users\\\\aho\\\\AppData\\\\Local\\\\Temp\\\\dash_screenshot.png\" http://localhost:3456/)",
+      "Read(//c/Users/aho/AppData/Local/Temp/**)",
+      "Bash(rm -rf .next)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:3456/)",
+      "Bash(\"/c/Program Files \\(x86\\)/Microsoft/Edge/Application/msedge.exe\" --headless=new --disable-gpu --window-size=1920,1080 --screenshot=\"C:\\\\Users\\\\aho\\\\AppData\\\\Local\\\\Temp\\\\dash2.png\" http://localhost:3456/)",
+      "Bash(curl -s http://localhost:3456/)",
+      "Bash(\"/c/Program Files \\(x86\\)/Microsoft/Edge/Application/msedge.exe\" --headless=new --disable-gpu --window-size=1920,1080 --screenshot=\"C:\\\\Users\\\\aho\\\\AppData\\\\Local\\\\Temp\\\\dash3.png\" http://localhost:3456/)",
+      "Bash(curl -s http://localhost:3456/ -o /tmp/d3.html)",
+      "Bash(sed 's/<[^>]*>//g; s/<!-- -->//g' /tmp/d3.html | grep -oE \"[0-9]+ \\(records|errors|items|item\\)\" | sort | uniq -c | sort -rn | head -15)",
+      "Bash(curl -s --max-time 60 http://localhost:3000/ -o /tmp/dev.html)",
+      "Bash(grep -o '\"sql\":\"insert into[^\"]\\\\{0,40\\\\}' /tmp/dev.html)",
+      "Bash(grep -o '\"sql\":\"drop table if exists[^\"]\\\\{0,30\\\\}' /tmp/dev.html)"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
+    ]
+  }
+}
