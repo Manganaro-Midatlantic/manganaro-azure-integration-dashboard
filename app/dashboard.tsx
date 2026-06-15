@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import type {
 	ActivityGroup,
 	ActivityRun,
@@ -365,9 +366,7 @@ export default function Dashboard({ data }: { data: DashboardData }) {
 			{/* Header */}
 			<header className="flex items-center gap-4 border-b border-slate-700/50 px-5 py-3">
 				<div className="flex items-center gap-3">
-					<div className="w-8 h-8 rounded-lg bg-blue-600 grid place-items-center text-white font-bold text-base">
-						⌁
-					</div>
+					<Image src="/favicon.png" alt="logo" width={32} height={32} className="rounded-lg object-contain" />
 					<div>
 						<h1 className="font-semibold text-base leading-tight text-slate-100">
 							Integration Dashboard

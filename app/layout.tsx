@@ -8,8 +8,11 @@ const rubik = Rubik({
 });
 
 export const metadata: Metadata = {
-  title: "Azure Integration Dashboard",
-  description: "Debug viewer for Azure Data Factory integration run logs",
+	title: "Azure Integration Dashboard",
+	description: "Debug viewer for Azure Data Factory integration run logs",
+	icons: {
+		icon: "/favicon.png",
+	},
 };
 
 export default function RootLayout({
