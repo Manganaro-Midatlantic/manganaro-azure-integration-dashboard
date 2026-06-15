@@ -414,29 +414,61 @@ export default function Dashboard({ data }: { data: DashboardData }) {
 
 			{data.availableDays.length > 0 && (
 				<nav className="flex items-center gap-0.5 border-b border-slate-700/50 px-4 overflow-x-auto shrink-0 bg-slate-900/80">
-					{data.availableDays.map((d) => {
-						const active = d === data.currentDay;
-						const label = new Date(
-							d + "T12:00:00",
-						).toLocaleDateString("en-US", {
-							weekday: "short",
-							month: "short",
-							day: "numeric",
-						});
+					{(() => {
+						const recentDays = data.availableDays.slice(0, 7);
+						const olderDays = data.availableDays.slice(7);
+						const currentIsOlder =
+							data.currentDay !== null && !recentDays.includes(data.currentDay);
+						const fmtDay = (d: string) =>
+							new Date(d + "T12:00:00").toLocaleDateString("en-US", {
+								weekday: "short", month: "short", day: "numeric",
+							});
 						return (
-							<button
-								key={d}
-								onClick={() => router.push(`/?day=${d}`)}
-								className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 -mb-px transition-colors ${
-									active
-										? "border-blue-500 text-blue-400"
-										: "border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600"
-								}`}
-							>
-								{label}
-							</button>
+							<>
+								{currentIsOlder && (
+									<>
+										<button
+											onClick={() => router.push(`/?day=${data.currentDay}`)}
+											className="px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 -mb-px border-blue-500 text-blue-400"
+										>
+											{fmtDay(data.currentDay!)}
+										</button>
+										<div className="w-px h-4 bg-slate-700 mx-1 shrink-0" />
+									</>
+								)}
+								{recentDays.map((d) => (
+									<button
+										key={d}
+										onClick={() => router.push(`/?day=${d}`)}
+										className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 -mb-px transition-colors ${
+											d === data.currentDay
+												? "border-blue-500 text-blue-400"
+												: "border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600"
+										}`}
+									>
+										{fmtDay(d)}
+									</button>
+								))}
+								{data.availableDays.length > 7 && (
+									<>
+										<div className="w-px h-4 bg-slate-700 mx-1 shrink-0" />
+										<select
+											value={currentIsOlder ? (data.currentDay ?? "") : ""}
+											onChange={(e) =>
+												e.target.value && router.push(`/?day=${e.target.value}`)
+											}
+											className="ml-1 rounded-md border border-slate-600/60 bg-slate-800 px-2.5 py-1 text-xs text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500/40 focus:border-blue-500 cursor-pointer"
+										>
+											<option value="">Older logs…</option>
+											{olderDays.map((d) => (
+												<option key={d} value={d}>{fmtDay(d)}</option>
+											))}
+										</select>
+									</>
+								)}
+							</>
 						);
-					})}
+					})()}
 				</nav>
 			)}
 
