@@ -1,7 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import type {
 	ActivityGroup,
@@ -254,8 +253,56 @@ function PanelTitle({
 	);
 }
 
-export default function Dashboard({ data }: { data: DashboardData }) {
-	const router = useRouter();
+export default function Dashboard({ data: initialData }: { data: DashboardData }) {
+	const [data, setData] = useState<DashboardData>(initialData);
+	const [loadingDay, setLoadingDay] = useState<string | null>(null);
+	// Client-side cache of already-fetched days so re-visits are instant.
+	// Seeded with the server-rendered initial day.
+	const dayCache = useRef<Map<string, DashboardData>>(
+		new Map(initialData.currentDay ? [[initialData.currentDay, initialData]] : []),
+	);
+	// The day list comes from the initial SSR render. Cached day responses carry
+	// their own (immutable) list, so we pin this one to keep the tab bar stable;
+	// a new day appearing is picked up on the next full page load.
+	const availableDays = useRef(initialData.availableDays);
+
+	const switchDay = useCallback(
+		async (day: string, push = true) => {
+			if (day === data.currentDay) return;
+			if (push) window.history.pushState(null, "", `/?day=${day}`);
+
+			const apply = (d: DashboardData) =>
+				setData({ ...d, availableDays: availableDays.current });
+
+			const cached = dayCache.current.get(day);
+			if (cached) {
+				apply(cached);
+				return;
+			}
+			setLoadingDay(day);
+			try {
+				const res = await fetch(`/api/day?day=${day}`);
+				if (!res.ok) throw new Error(`Failed to load ${day}`);
+				const next: DashboardData = await res.json();
+				dayCache.current.set(day, next);
+				apply(next);
+			} finally {
+				setLoadingDay(null);
+			}
+		},
+		[data.currentDay],
+	);
+
+	// Keep browser back/forward in sync — re-switch to the day in the URL.
+	useEffect(() => {
+		const onPop = () => {
+			const day = new URLSearchParams(window.location.search).get("day");
+			if (day) switchDay(day, false);
+		};
+		window.addEventListener("popstate", onPop);
+		return () => window.removeEventListener("popstate", onPop);
+	}, [switchDay]);
+
 	// Every page load starts fresh: nothing selected, nothing expanded.
 	const [selectedRunId, setSelectedRunId] = useState<string | undefined>(
 		undefined,
@@ -427,7 +474,7 @@ export default function Dashboard({ data }: { data: DashboardData }) {
 								{currentIsOlder && (
 									<>
 										<button
-											onClick={() => router.push(`/?day=${data.currentDay}`)}
+											onClick={() => switchDay(data.currentDay!)}
 											className="px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 -mb-px border-blue-500 text-blue-400"
 										>
 											{fmtDay(data.currentDay!)}
@@ -438,12 +485,13 @@ export default function Dashboard({ data }: { data: DashboardData }) {
 								{recentDays.map((d) => (
 									<button
 										key={d}
-										onClick={() => router.push(`/?day=${d}`)}
+										onClick={() => switchDay(d)}
+										disabled={loadingDay !== null}
 										className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 -mb-px transition-colors ${
 											d === data.currentDay
 												? "border-blue-500 text-blue-400"
 												: "border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600"
-										}`}
+										} ${loadingDay === d ? "opacity-60" : ""}`}
 									>
 										{fmtDay(d)}
 									</button>
@@ -454,7 +502,7 @@ export default function Dashboard({ data }: { data: DashboardData }) {
 										<select
 											value={currentIsOlder ? (data.currentDay ?? "") : ""}
 											onChange={(e) =>
-												e.target.value && router.push(`/?day=${e.target.value}`)
+												e.target.value && switchDay(e.target.value)
 											}
 											className="ml-1 rounded-md border border-slate-600/60 bg-slate-800 px-2.5 py-1 text-xs text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500/40 focus:border-blue-500 cursor-pointer"
 										>
