@@ -9,14 +9,14 @@ import type {
 	IntegrationRun,
 } from "@/lib/types";
 
-function fmtDate(ms: number): string {
-	if (!Number.isFinite(ms)) return "—";
-	return new Date(ms).toLocaleDateString("en-US", {
-		month: "short",
-		day: "numeric",
-		year: "numeric",
-	});
-}
+// function fmtDate(ms: number): string {
+// 	if (!Number.isFinite(ms)) return "—";
+// 	return new Date(ms).toLocaleDateString("en-US", {
+// 		month: "short",
+// 		day: "numeric",
+// 		year: "numeric",
+// 	});
+// }
 
 function fmtTime(ms: number): string {
 	if (!Number.isFinite(ms)) return "—";
@@ -25,6 +25,7 @@ function fmtTime(ms: number): string {
 		minute: "2-digit",
 		second: "2-digit",
 		hour12: true,
+		timeZone: "America/New_York"
 	});
 }
 
