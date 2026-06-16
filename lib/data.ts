@@ -57,7 +57,10 @@ function parseTimestamp(text: string): number {
   if (iso) {
     const [, y, mo, d, h, min, s, frac] = iso;
     const ms = frac ? Number(frac.slice(0, 3).padEnd(3, "0")) : 0;
-    return new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(min), Number(s), ms).getTime();
+    // Timestamps are already NY-local wall-clock (KQL datetime_utc_to_local) with no
+    // offset. Build the epoch in UTC so the value is independent of the host's zone;
+    // formatters render it back with timeZone "UTC" to reproduce the original clock.
+    return Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(min), Number(s), ms);
   }
   // US locale from manual KQL export: "6/12/2026, 12:02:17.000 AM"
   const m = text.match(/(\d+)\/(\d+)\/(\d+),?\s+(\d+):(\d+):(\d+)(?:\.(\d+))?\s*(AM|PM)/i);
@@ -65,7 +68,7 @@ function parseTimestamp(text: string): number {
   const [, mo, d, y, h, min, s, ms, ampm] = m;
   let hour = Number(h) % 12;
   if (ampm.toUpperCase() === "PM") hour += 12;
-  return new Date(Number(y), Number(mo) - 1, Number(d), hour, Number(min), Number(s), Number(ms ?? 0)).getTime();
+  return Date.UTC(Number(y), Number(mo) - 1, Number(d), hour, Number(min), Number(s), Number(ms ?? 0));
 }
 
 function tryParseJson(text: string): unknown {

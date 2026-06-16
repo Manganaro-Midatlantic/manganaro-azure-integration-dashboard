@@ -25,7 +25,7 @@ function fmtTime(ms: number): string {
 		minute: "2-digit",
 		second: "2-digit",
 		hour12: true,
-		timeZone: "America/New_York"
+		timeZone: "UTC",
 	});
 }
 
