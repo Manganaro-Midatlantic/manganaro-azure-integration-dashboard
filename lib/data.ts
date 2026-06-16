@@ -201,6 +201,111 @@ function extractSql(input: unknown): string | null {
   return null;
 }
 
+/**
+ * Curated record-identifying fields to surface (in place of the raw API response)
+ * for each WebActivity step, keyed by activity name. Each rule pulls one value out
+ * of the request body. Field names differ per step (e.g. material is "name" on
+ * create but "material_name" on assignment), so the mapping is explicit.
+ */
+type MetaRule = { label: string; from: (b: Record<string, unknown>) => string | undefined };
+
+function asText(v: unknown): string | undefined {
+  if (v === null || v === undefined || v === "") return undefined;
+  if (Array.isArray(v)) return v.map((x) => String(x)).join(", ") || undefined;
+  return String(v);
+}
+
+const RECORD_META_RULES: Record<string, MetaRule[]> = {
+  "POST equipment": [{ label: "Equipment ID", from: (b) => asText(b.equipment_id) }],
+  "POST project_equipment": [
+    { label: "Equipment ID: ", from: (b) => asText(b.equipment_id) },
+    { label: "Job(s): ", from: (b) => asText(b.job_numbers) },
+  ],
+  "POST equipment_pricing": [
+    { label: "Equipment ID: ", from: (b) => asText(b.equipment_id) },
+    { label: "Job(s): ", from: (b) => asText(b.job_numbers) },
+  ],
+  "POST material": [{ label: "Material", from: (b) => asText(b.name) }],
+  "POST project_material": [
+    { label: "Material: ", from: (b) => asText(b.material_name) },
+    { label: "Job(s): ", from: (b) => asText(b.job_numbers) },
+  ],
+  "POST material_pricing": [
+    { label: "Material", from: (b) => asText(b.material_name) },
+    { label: "Job(s)", from: (b) => asText(b.job_numbers) },
+  ],
+  "POST EWO employee": [{ label: "Company Supplied ID", from: (b) => asText(b.company_supplied_id) }],
+  "POST employee_project": [
+    { label: "Company Supplied ID: ", from: (b) => asText(b.company_supplied_id) },
+    { label: "Job(s): ", from: (b) => asText(b.job_numbers) },
+  ],
+  "POST employee_pricing": [
+    { label: "Company Supplied ID: ", from: (b) => asText(b.company_supplied_id) },
+    { label: "Job(s): ", from: (b) => asText(b.job_numbers) },
+  ],
+  "POST project": [
+    { label: "Job Number: ", from: (b) => asText(b.job_number) },
+    { label: "Name: ", from: (b) => asText(b.name) },
+  ],
+  "POST cost_code": [
+    { label: "Code: ", from: (b) => asText(b.code) },
+    { label: "Description: ", from: (b) => asText(b.description) },
+  ],
+  "POST budget": [
+    { label: "Job Number: ", from: (b) => asText(b.job_number) },
+    { label: "Cost Code: ", from: (b) => asText(b.cost_code) },
+  ],
+  "POST employee": [
+    {
+      label: "Name: ",
+      from: (b) =>
+        asText([asText(b.first_name), asText(b.last_name)].filter(Boolean).join(" ")),
+    },
+  ],
+  "POST employee_group": [
+    { label: "Company Supplied ID: ", from: (b) => asText(b.company_supplied_id) },
+    { label: "Group IDs: ", from: (b) => asText(b.company_group_ids) },
+  ],
+};
+
+function extractRecordMeta(activityName: string, body: unknown): [string, string][] {
+  const rules = RECORD_META_RULES[activityName];
+  if (!rules || body === null || typeof body !== "object" || Array.isArray(body)) return [];
+  const b = body as Record<string, unknown>;
+  const out: [string, string][] = [];
+  for (const rule of rules) {
+    const v = rule.from(b);
+    if (v !== undefined) out.push([rule.label, v]);
+  }
+  return out;
+}
+
+/**
+ * Body field that identifies the record for grouping. Only the multi-step
+ * integrations are listed — their create/assign/price calls share this value, so
+ * they collapse under one record. Single-step integrations are intentionally
+ * absent (nothing to consolidate).
+ */
+const RECORD_KEY_FIELD: Record<string, string> = {
+  "POST equipment": "equipment_id",
+  "POST project_equipment": "equipment_id",
+  "POST equipment_pricing": "equipment_id",
+  "POST material": "name",
+  "POST project_material": "material_name",
+  "POST material_pricing": "material_name",
+  "POST EWO employee": "company_supplied_id",
+  "POST employee_project": "company_supplied_id",
+  "POST employee_pricing": "company_supplied_id",
+  "POST employee": "company_supplied_id",
+  "POST employee_group": "company_supplied_id",
+};
+
+function recordKeyFor(activityName: string, body: unknown): string | undefined {
+  const field = RECORD_KEY_FIELD[activityName];
+  if (!field || body === null || typeof body !== "object" || Array.isArray(body)) return undefined;
+  return asText((body as Record<string, unknown>)[field]);
+}
+
 function buildActivity(r: string[], index: number): ActivityRun {
   const [pipelineName, activityName, activityType, inputText, outputText, status, start, end] = r;
 
@@ -251,16 +356,13 @@ function buildActivity(r: string[], index: number): ActivityRun {
     httpStatus,
     metrics: extractMetrics(input, rawOutput),
     errorMessages: outputObj ? extractErrorMessages(outputObj.errors) : [],
+    recordMeta: extractRecordMeta(activityName, body),
+    recordKey: recordKeyFor(activityName, body),
     output,
     outputRaw: output !== null ? JSON.stringify(output, null, 2) : "",
     startMs: parseTimestamp(start),
     endMs: parseTimestamp(end),
   };
-}
-
-/** ForEach loops are containers around real work, not records themselves */
-function isRecordActivity(a: ActivityRun): boolean {
-  return a.activityType !== "ForEach";
 }
 
 function groupByActivityName(children: ActivityRun[]): ActivityGroup[] {
@@ -276,6 +378,15 @@ function groupByActivityName(children: ActivityRun[]): ActivityGroup[] {
     g.activities.push(c);
     if (c.status !== "Succeeded") g.errorCount++;
   }
+  // Within a group whose rows carry a record identity (cost codes, budgets,
+  // projects…), order the rows ascending by that identity (natural order).
+  for (const g of groups) {
+    if (g.activities.some((a) => a.recordMeta.length > 0)) {
+      g.activities.sort((a, b) =>
+        recordSortKey(a).localeCompare(recordSortKey(b), undefined, { numeric: true }),
+      );
+    }
+  }
   // Order groups by when they actually started — a ForEach loop starts before
   // the activities inside it, even though the CSV lists it after (it ends last).
   groups.sort(
@@ -286,6 +397,80 @@ function groupByActivityName(children: ActivityRun[]): ActivityGroup[] {
   return groups;
 }
 
+/** Sort key from a row's record identity, e.g. "23-2301823.|LAA.100000." */
+function recordSortKey(a: ActivityRun): string {
+  return a.recordMeta.map(([, v]) => v).join("|");
+}
+
+/**
+ * Build the activity groups for a run. Multi-step integrations consolidate by
+ * record identity — the create/assign/price calls that share a recordKey collapse
+ * into one expandable record (dropping the now-redundant ForEach containers). Runs
+ * with nothing to consolidate (single-step integrations, SQL scripts) fall back to
+ * grouping by activity name.
+ */
+function buildGroups(children: ActivityRun[]): ActivityGroup[] {
+  const byKey = new Map<string, ActivityRun[]>();
+  for (const c of children) {
+    if (c.recordKey === undefined) continue;
+    const list = byKey.get(c.recordKey) ?? [];
+    list.push(c);
+    byKey.set(c.recordKey, list);
+  }
+  const consolidates = [...byKey.values()].some((acts) => acts.length > 1);
+  if (!consolidates) return groupByActivityName(children);
+
+  const keyed = new Set<string>();
+  const recordGroups: ActivityGroup[] = [];
+  for (const [key, acts] of byKey) {
+    acts.forEach((a) => keyed.add(a.id));
+    acts.sort((a, b) => a.startMs - b.startMs);
+    recordGroups.push({
+      name: key,
+      activityType: "",
+      activities: acts,
+      errorCount: acts.filter((a) => a.status !== "Succeeded").length,
+      isRecordGroup: true,
+    });
+  }
+  // Ascending by record identity (natural order so 23-… sorts before 25-…)
+  recordGroups.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  // Keep any non-ForEach leftovers (rare) as activity-name groups; drop the now-
+  // redundant ForEach loop containers.
+  const rest = children.filter((c) => !keyed.has(c.id) && c.activityType !== "ForEach");
+  return [...recordGroups, ...groupByActivityName(rest)];
+}
+
+/**
+ * Record count for an integration. When consolidated by record, it's simply the
+ * number of records (with errors = records that had any failed step). Otherwise each
+ * business record fans out into one activity per step, so the count is the widest
+ * non-ForEach step group, not the sum across steps.
+ */
+function countRecords(groups: ActivityGroup[]): {
+  records: number;
+  successCount: number;
+  errorCount: number;
+} {
+  const recordGroups = groups.filter((g) => g.isRecordGroup);
+  if (recordGroups.length > 0) {
+    const records = recordGroups.length;
+    const errorCount = recordGroups.filter((g) => g.errorCount > 0).length;
+    return { records, successCount: records - errorCount, errorCount };
+  }
+  let widest: ActivityGroup | null = null;
+  for (const g of groups) {
+    if (g.activityType === "ForEach") continue; // containers, not records
+    if (!widest || g.activities.length > widest.activities.length) widest = g;
+  }
+  if (!widest) return { records: 0, successCount: 0, errorCount: 0 };
+  const records = widest.activities.length;
+  return { records, successCount: records - widest.errorCount, errorCount: widest.errorCount };
+}
+
+/** Activity names to hide from the dashboard entirely (e.g. lookups being retired). */
+const HIDDEN_ACTIVITY_NAMES = new Set(["Check for new Budgets", "For Each new Budget", "Check for new Projects", "For Each New Project", "Check for new Cost Code Status", "For Each new Cost Code Status", "Check for new Cost Codes", "For Each new Cost Code"]);
+
 /** Parse CSV text into a DashboardData object */
 export function parseDashboardData(
   text: string,
@@ -294,7 +479,10 @@ export function parseDashboardData(
   currentDay: string | null = null,
 ): DashboardData {
   const rows = parseCsv(text.replace(/^﻿/, "")).filter((r) => r.length >= 8);
-  const activities = rows.slice(1).map(buildActivity);
+  const activities = rows
+    .slice(1)
+    .map(buildActivity)
+    .filter((a) => !HIDDEN_ACTIVITY_NAMES.has(a.activityName));
 
   // MASTER ExecutePipeline activities are the top-level integrations; everything the
   // referenced child pipeline logged inside the parent's time window belongs to it.
@@ -316,8 +504,8 @@ export function parseDashboardData(
     );
     for (const c of children) claimed.add(c.id);
 
-    const records = children.filter(isRecordActivity);
-    const errorCount = records.filter((c) => c.status !== "Succeeded").length;
+    const groups = buildGroups(children);
+    const { records, successCount, errorCount } = countRecords(groups);
     return {
       id: `run${i}`,
       name: m.activityName,
@@ -325,10 +513,10 @@ export function parseDashboardData(
       status: m.status,
       startMs: m.startMs,
       endMs: m.endMs,
-      records: records.length,
-      successCount: records.length - errorCount,
+      records,
+      successCount,
       errorCount,
-      groups: groupByActivityName(children),
+      groups,
     };
   });
 
@@ -343,31 +531,31 @@ export function parseDashboardData(
     orphansByPipe.set(o.pipelineName, list);
   }
   for (const [pipe, list] of orphansByPipe) {
-    const records = list.filter(isRecordActivity);
-    const errorCount = records.filter((c) => c.status !== "Succeeded").length;
+    const groups = buildGroups(list);
+    const { records, successCount, errorCount } = countRecords(groups);
     runs.push({
       id: `orphan-${pipe}`,
       name: `${pipe} (standalone)`,
       childPipeline: pipe,
-      status: errorCount > 0 ? "Failed" : "Succeeded",
+      // any failed step flags the run, even if it isn't the widest group
+      status: groups.some((g) => g.errorCount > 0) ? "Failed" : "Succeeded",
       startMs: Math.min(...list.map((a) => a.startMs)),
       endMs: Math.max(...list.map((a) => a.endMs)),
-      records: records.length,
-      successCount: records.length - errorCount,
+      records,
+      successCount,
       errorCount,
-      groups: groupByActivityName(list),
+      groups,
     });
   }
 
   runs.sort((a, b) => a.startMs - b.startMs);
 
-  const allRecords = activities.filter(
-    (a) => a.pipelineName !== "MASTER" && isRecordActivity(a),
-  );
+  // Header totals reflect deduplicated records (sum of per-integration counts),
+  // not raw activity rows.
   return {
     generatedFrom: source,
-    totalActivities: allRecords.length,
-    totalErrors: allRecords.filter((a) => a.status !== "Succeeded").length,
+    totalActivities: runs.reduce((sum, r) => sum + r.records, 0),
+    totalErrors: runs.reduce((sum, r) => sum + r.errorCount, 0),
     runs,
     availableDays,
     currentDay,

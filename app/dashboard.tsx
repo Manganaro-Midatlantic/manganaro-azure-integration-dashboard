@@ -720,6 +720,64 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 									});
 								}
 
+								// Single-step integrations (cost codes, budgets, projects):
+								// no dropdown — just a flat, clickable list of record rows.
+								const isFlatRecordList =
+									!group.isRecordGroup &&
+									group.activities.some(
+										(a) => a.recordMeta.length > 0,
+									);
+								if (isFlatRecordList) {
+									return (
+										<table key={group.name} className="w-full text-xs">
+											<tbody>
+												{list.map((a) => {
+													const failed = a.status !== "Succeeded";
+													const selected = a.id === selectedActivityId;
+													const meta = a.recordMeta
+														.map(([k, v]) => `${k.replace(/[:\s]+$/, "")}: ${v}`)
+														.join(" · ");
+													return (
+														<tr
+															key={a.id}
+															onClick={() => setSelectedActivityId(a.id)}
+															className={`cursor-pointer border-b border-slate-700/40 last:border-0 ${
+																selected
+																	? "bg-blue-500/15"
+																	: failed
+																		? "bg-red-500/5 hover:bg-red-500/10"
+																		: "hover:bg-slate-700/30"
+															}`}
+														>
+															<td className="pl-4 pr-2 py-1.5 w-8">
+																<StatusDot ok={!failed} />
+															</td>
+															<td className="px-2 py-1.5 whitespace-nowrap font-mono text-slate-400">
+																{fmtTime(a.startMs)}
+															</td>
+															<td className="px-2 py-1.5 whitespace-nowrap">
+																{a.httpStatus && <HttpStatusPill code={a.httpStatus} />}
+															</td>
+															<td
+																className={`w-full px-2 py-1.5 truncate ${
+																	failed ? "text-red-400 font-medium" : "text-slate-400"
+																}`}
+															>
+																{failed
+																	? (a.errorMessages[0] ?? "Failed — no error detail logged")
+																	: meta || "Completed"}
+															</td>
+															<td className="px-2 py-1.5 whitespace-nowrap text-right text-slate-400">
+																{fmtDuration(a.startMs, a.endMs)}
+															</td>
+														</tr>
+													);
+												})}
+											</tbody>
+										</table>
+									);
+								}
+
 								return (
 									<div
 										key={group.name}
@@ -744,15 +802,21 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 											<span className="font-medium text-slate-200">
 												{group.name}
 											</span>
-											<span className="rounded bg-slate-700/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-300">
-												{group.activityType}
-											</span>
+											{group.activityType && (
+												<span className="rounded bg-slate-700/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-300">
+													{group.activityType}
+												</span>
+											)}
 											<span className="ml-auto text-xs text-slate-400">
 												{list.length}
 												{list.length !==
 													group.activities.length &&
 													` of ${group.activities.length}`}{" "}
-												records
+												{group.isRecordGroup
+													? list.length === 1
+														? "step"
+														: "steps"
+													: "records"}
 												{group.errorCount > 0 && (
 													<span className="text-red-400 font-semibold">
 														{" "}
@@ -791,59 +855,33 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 																}`}
 															>
 																<td className="pl-11 pr-2 py-1.5 w-8">
-																	<StatusDot
-																		ok={
-																			!failed
-																		}
-																	/>
+																	<StatusDot ok={!failed} />
 																</td>
 																<td className="px-2 py-1.5 whitespace-nowrap font-mono text-slate-400">
-																	{fmtTime(
-																		a.startMs,
-																	)}
-																</td>
-																<td className="px-2 py-1.5 whitespace-nowrap text-slate-400">
-																	{fmtDuration(
-																		a.startMs,
-																		a.endMs,
-																	)}
+																	{fmtTime(a.startMs)}
 																</td>
 																<td className="px-2 py-1.5 whitespace-nowrap">
-																	{a.httpStatus && (
-																		<HttpStatusPill
-																			code={
-																				a.httpStatus
-																			}
-																		/>
-																	)}
+																	{a.httpStatus && <HttpStatusPill code={a.httpStatus} />}
 																</td>
 																<td
-																	className={`px-2 py-1.5 truncate max-w-md ${
-																		failed
-																			? "text-red-400 font-medium"
-																			: "text-slate-400"
+																	className={`w-full px-2 py-1.5 truncate ${
+																		failed ? "text-red-400 font-medium" : "text-slate-400"
 																	}`}
 																>
-																	{failed
-																		? (a
-																				.errorMessages[0] ??
-																			"Failed — no error detail logged")
-																		: a
-																					.metrics
-																					.length >
-																			  0
-																			? a.metrics
-																					.map(
-																						([
-																							k,
-																							v,
-																						]) =>
-																							`${k} ${v}`,
-																					)
-																					.join(
-																						" · ",
-																					)
-																			: "Completed"}
+																	{group.isRecordGroup
+																		? failed
+																			? `${a.activityName} — ${a.errorMessages[0] ?? "Failed"}`
+																			: a.activityName
+																		: failed
+																			? (a.errorMessages[0] ?? "Failed — no error detail logged")
+																			: a.recordMeta.length > 0
+																				? a.recordMeta.map(([k, v]) => `${k} ${v}`).join(" · ")
+																				: a.metrics.length > 0
+																					? a.metrics.map(([k, v]) => `${k} ${v}`).join(" · ")
+																					: "Completed"}
+																</td>
+																<td className="px-2 py-1.5 whitespace-nowrap text-right text-slate-400">
+																	{fmtDuration(a.startMs, a.endMs)}
 																</td>
 															</tr>
 														);

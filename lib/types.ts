@@ -21,6 +21,12 @@ export interface ActivityRun {
   metrics: [string, string][];
   /** Human-readable error messages extracted from the response */
   errorMessages: string[];
+  /** Curated record-identifying fields pulled from the request body (WebActivity),
+   *  shown in place of the raw API response. e.g. [["Equipment ID","25-2500641.-0025"]] */
+  recordMeta: [string, string][];
+  /** Shared identity (equipment_id / material name / company_supplied_id …) used to
+   *  group an integration's related steps under one record. undefined when not groupable. */
+  recordKey?: string;
   /** Response payload with ADF billing/header noise removed */
   output: unknown;
   outputRaw: string;
@@ -28,12 +34,16 @@ export interface ActivityRun {
   endMs: number;
 }
 
-/** Activities that share the same name within a run, e.g. 84 "Upload materials" calls */
+/** Activities grouped within a run — either by activity name (e.g. 84 "Upload materials"
+ *  calls) or, for multi-step integrations, by record identity (the create/assign/price
+ *  operations for one equipment_id collapsed under that id). */
 export interface ActivityGroup {
   name: string;
   activityType: string;
   activities: ActivityRun[];
   errorCount: number;
+  /** True when `name` is a record identity and `activities` are that record's steps. */
+  isRecordGroup?: boolean;
 }
 
 /** One top-level integration: a MASTER ExecutePipeline call and the child pipeline's activities */

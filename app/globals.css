@@ -21,6 +21,9 @@
 html {
   /* the dashboard is dark-only; keeps native scrollbars and form controls dark */
   color-scheme: dark;
+  /* Nudge the base size up so every rem-based text/spacing scales a touch larger
+     (default is 16px). Adjust this one value to taste. */
+  font-size: 17px;
 }
 
 body {
