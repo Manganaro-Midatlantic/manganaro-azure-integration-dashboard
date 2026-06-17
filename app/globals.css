@@ -19,14 +19,51 @@
 }
 
 html {
-  /* the dashboard is dark-only; keeps native scrollbars and form controls dark */
   color-scheme: dark;
-  /* Nudge the base size up so every rem-based text/spacing scales a touch larger
-     (default is 16px). Adjust this one value to taste. */
-  font-size: 17px;
+  font-size: 18px;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
+}
+
+pre,
+code,
+.font-mono {
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fade-in-up {
+  animation: fade-in-up 0.2s ease-out;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(71 85 105 / 0.5) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgb(71 85 105 / 0.5);
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(100 116 139 / 0.7);
 }

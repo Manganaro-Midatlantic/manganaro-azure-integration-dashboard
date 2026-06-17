@@ -8,51 +8,7 @@ import type {
 	DashboardData,
 	IntegrationRun,
 } from "@/lib/types";
-
-// function fmtDate(ms: number): string {
-// 	if (!Number.isFinite(ms)) return "—";
-// 	return new Date(ms).toLocaleDateString("en-US", {
-// 		month: "short",
-// 		day: "numeric",
-// 		year: "numeric",
-// 	});
-// }
-
-function fmtTime(ms: number): string {
-	if (!Number.isFinite(ms)) return "—";
-	return new Date(ms).toLocaleTimeString("en-US", {
-		hour: "numeric",
-		minute: "2-digit",
-		second: "2-digit",
-		hour12: true,
-		timeZone: "UTC",
-	});
-}
-
-function fmtDuration(startMs: number, endMs: number): string {
-	const total = Math.max(0, Math.round((endMs - startMs) / 1000));
-	const m = Math.floor(total / 60);
-	const s = total % 60;
-	return m > 0 ? `${m}m ${s}s` : `${s}s`;
-}
-
-function clamp(value: number, min: number, max: number): number {
-	return Math.min(max, Math.max(min, value));
-}
-
-/** Flatten a request body into key/value rows for the fields table */
-function flatten(value: unknown, prefix = ""): [string, string][] {
-	if (value === null || value === undefined) return [];
-	if (typeof value !== "object") return [[prefix || "value", String(value)]];
-	if (Array.isArray(value)) {
-		return value.flatMap((v, i) =>
-			flatten(v, prefix ? `${prefix}[${i}]` : `[${i}]`),
-		);
-	}
-	return Object.entries(value as Record<string, unknown>).flatMap(([k, v]) =>
-		flatten(v, prefix ? `${prefix}.${k}` : k),
-	);
-}
+import { clamp, flatten, fmtDuration, fmtTime } from "@/lib/format";
 
 function StatusDot({ ok }: { ok: boolean }) {
 	return (
@@ -67,10 +23,10 @@ function StatusDot({ ok }: { ok: boolean }) {
 function StatusPill({ ok, label }: { ok: boolean; label: string }) {
 	return (
 		<span
-			className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${
+			className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${
 				ok
-					? "bg-emerald-500/10 text-emerald-400"
-					: "bg-red-500/10 text-red-400"
+					? "bg-emerald-500/10 text-emerald-400 ring-emerald-500/20"
+					: "bg-red-500/10 text-red-400 ring-red-500/20"
 			}`}
 		>
 			<StatusDot ok={ok} />
@@ -83,10 +39,10 @@ function HttpStatusPill({ code }: { code: string }) {
 	const ok = code.startsWith("2");
 	return (
 		<span
-			className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-semibold font-mono ${
+			className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-semibold font-mono ring-1 ring-inset ${
 				ok
-					? "bg-emerald-500/15 text-emerald-400"
-					: "bg-red-500/15 text-red-400"
+					? "bg-emerald-500/15 text-emerald-400 ring-emerald-500/20"
+					: "bg-red-500/15 text-red-400 ring-red-500/20"
 			}`}
 		>
 			HTTP {code}
@@ -198,7 +154,27 @@ function SqlView({ sql }: { sql: string }) {
 	);
 }
 
-const card = "bg-slate-800/50 rounded-xl border border-slate-700/50";
+const card =
+	"bg-slate-800/40 rounded-2xl border border-slate-700/40 shadow-xl shadow-black/20 backdrop-blur-sm";
+
+/** Centered placeholder shown in a panel before a record is selected */
+function EmptyHint({ label }: { label: string }) {
+	return (
+		<div className="flex h-full flex-col items-center justify-center gap-2 px-4 py-8 text-center text-slate-500">
+			<svg
+				xmlns="http://www.w3.org/2000/svg"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="1.5"
+				className="h-7 w-7 opacity-30"
+			>
+				<path d="M4 6h16M4 12h10M4 18h7" />
+			</svg>
+			<p className="text-xs">{label}</p>
+		</div>
+	);
+}
 
 /** Collapsed panels shrink to a slim rail with a vertical label */
 function CollapsedRail({
@@ -219,7 +195,7 @@ function CollapsedRail({
 			>
 				⤢
 			</button>
-			<span className="[writing-mode:vertical-rl] text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+			<span className="[writing-mode:vertical-rl] text-[11px] font-semibold uppercase tracking-wider text-slate-300">
 				{title}
 			</span>
 		</div>
@@ -236,8 +212,9 @@ function PanelTitle({
 	children?: React.ReactNode;
 }) {
 	return (
-		<div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-700/50">
-			<span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+		<div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-700/40">
+			<span className="h-3.5 w-1 rounded-full bg-linear-to-b from-sky-400 to-indigo-500" />
+			<span className="text-[11px] font-semibold uppercase tracking-wider text-slate-200">
 				{title}
 			</span>
 			{children}
@@ -254,17 +231,23 @@ function PanelTitle({
 	);
 }
 
-export default function Dashboard({ data: initialData }: { data: DashboardData }) {
+export default function Dashboard({
+	data: initialData,
+}: {
+	data: DashboardData;
+}) {
 	const [data, setData] = useState<DashboardData>(initialData);
 	const [loadingDay, setLoadingDay] = useState<string | null>(null);
 	// Client-side cache of already-fetched days so re-visits are instant.
 	// Seeded with the server-rendered initial day.
 	const dayCache = useRef<Map<string, DashboardData>>(
-		new Map(initialData.currentDay ? [[initialData.currentDay, initialData]] : []),
+		new Map(
+			initialData.currentDay
+				? [[initialData.currentDay, initialData]]
+				: [],
+		),
 	);
-	// The day list comes from the initial SSR render. Cached day responses carry
-	// their own (immutable) list, so we pin this one to keep the tab bar stable;
-	// a new day appearing is picked up on the next full page load.
+
 	const availableDays = useRef(initialData.availableDays);
 
 	const switchDay = useCallback(
@@ -304,7 +287,6 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 		return () => window.removeEventListener("popstate", onPop);
 	}, [switchDay]);
 
-	// Every page load starts fresh: nothing selected, nothing expanded.
 	const [selectedRunId, setSelectedRunId] = useState<string | undefined>(
 		undefined,
 	);
@@ -315,11 +297,11 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 	const [search, setSearch] = useState("");
 	const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
 
-	// Layout: resizable + collapsible columns
+	// Resizable + collapsible columns
 	const [sidebarWidth, setSidebarWidth] = useState(320);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 	const [inspectorHeight, setInspectorHeight] = useState(300);
-	// flex-grow ratios — when a panel collapses, the others flex into its space
+	
 	const [panelPct, setPanelPct] = useState({
 		request: 33,
 		body: 33,
@@ -365,14 +347,76 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 		return list;
 	}
 
+	// Flat lists render without a dropdown; record/script groups are collapsible.
+	const isFlatGroup = (g: ActivityGroup) =>
+		!g.isRecordGroup && g.activities.some((a) => a.recordMeta.length > 0);
+
+	// Ordered list of selectable record rows, in display order, for keyboard nav.
+	const navActivities: ActivityRun[] = [];
+	if (selectedRun) {
+		for (const g of selectedRun.groups) {
+			if (g.activityType === "ForEach") continue;
+			navActivities.push(...visibleActivities(g));
+		}
+	}
+	// Keep the latest list/selection reachable from the (once-registered) key handler.
+	const navRef = useRef({ list: navActivities, selId: selectedActivityId });
+	useEffect(() => {
+		navRef.current = { list: navActivities, selId: selectedActivityId };
+	});
+
+	// Arrow up/down moves the selection through the records.
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+			const tag = (e.target as HTMLElement | null)?.tagName;
+			if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT")
+				return;
+			const { list, selId } = navRef.current;
+			if (list.length === 0) return;
+			e.preventDefault();
+			const idx = list.findIndex((a) => a.id === selId);
+			const step = e.key === "ArrowDown" ? 1 : -1;
+			const nextIdx =
+				idx === -1
+					? 0
+					: Math.min(list.length - 1, Math.max(0, idx + step));
+			const next = list[nextIdx];
+			if (!next) return;
+			setSelectedActivityId(next.id);
+			// Auto-expand the containing collapsible group so the row is visible.
+			const grp = selectedRun?.groups.find((g) =>
+				g.activities.some((a) => a.id === next.id),
+			);
+			if (grp && grp.activityType !== "ForEach" && !isFlatGroup(grp)) {
+				setOpenGroups((prev) =>
+					prev.has(grp.name) ? prev : new Set(prev).add(grp.name),
+				);
+			}
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [selectedRun]);
+
+	// Keep the selected row scrolled into view as the selection moves.
+	useEffect(() => {
+		if (!selectedActivityId) return;
+		document
+			.querySelector(`[data-aid="${CSS.escape(selectedActivityId)}"]`)
+			?.scrollIntoView({ block: "nearest" });
+	}, [selectedActivityId]);
+
+	// Reset the activity-log scroll to the top when switching integrations.
+	const activityLogRef = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		activityLogRef.current?.scrollTo({ top: 0 });
+	}, [selectedRunId]);
+
 	function selectRun(run: IntegrationRun) {
 		setSelectedRunId(run.id);
 		setSelectedActivityId(null);
-		setOpenGroups(
-			new Set(
-				run.groups.filter((g) => g.errorCount > 0).map((g) => g.name),
-			),
-		);
+		// Start with every group collapsed, regardless of error state.
+		setOpenGroups(new Set());
 	}
 
 	function toggleGroup(name: string) {
@@ -410,14 +454,20 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 	const bodyTitle = selectedActivity?.sql ? "SQL" : "Body";
 
 	return (
-		<div className="flex flex-col h-screen bg-slate-900 text-slate-300 text-sm">
+		<div className="flex flex-col h-screen bg-linear-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-300 text-sm">
 			{/* Header */}
-			<header className="flex items-center gap-4 border-b border-slate-700/50 px-5 py-3">
+			<header className="flex items-center gap-4 border-b border-slate-700/40 bg-linear-to-b from-slate-900/40 to-transparent px-5 py-3">
 				<div className="flex items-center gap-3">
-					<Image src="/favicon.ico" alt="logo" width={32} height={32} className="rounded-lg object-contain" />
+					<Image
+						src="/favicon.ico"
+						alt="logo"
+						width={45}
+						height={45}
+						className="rounded-lg"
+					/>
 					<div>
-						<h1 className="font-semibold text-base leading-tight text-slate-100">
-							Integration Dashboard
+						<h1 className="text-lg font-bold leading-tight tracking-tight text-slate-200">
+							Manganaro Viewpoint to Rhumbix Integration Dashboard
 						</h1>
 						<p className="text-xs text-slate-400 leading-tight">
 							Azure Data Factory · {data.generatedFrom}
@@ -430,11 +480,11 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}
 						placeholder="Search activities, payloads, errors…"
-						className="w-72 rounded-lg border border-slate-600/60 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
+						className="w-72 rounded-full border border-slate-600/50 bg-slate-800/70 px-4 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
 					/>
 					<button
 						onClick={() => setErrorsOnly(!errorsOnly)}
-						className={`rounded-lg px-3 py-1.5 text-sm font-medium border transition-colors ${
+						className={`rounded-full px-4 py-1.5 text-sm font-medium border transition-colors ${
 							errorsOnly
 								? "bg-red-600 text-white border-red-600"
 								: "bg-slate-800 text-slate-300 border-slate-600/60 hover:bg-slate-700"
@@ -442,41 +492,61 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 					>
 						Errors only
 					</button>
-					<div className="flex items-center gap-2 pl-3 ml-1 border-l border-slate-700/50">
-						<span className="rounded-full bg-slate-700/60 px-2.5 py-0.5 text-xs font-medium text-slate-300">
-							{data.totalActivities} records
+					<div className="flex items-center gap-2 pl-3 ml-1 border-l border-slate-700/40">
+						<span className="inline-flex items-center gap-1.5 rounded-full bg-slate-700/40 px-3 py-1 text-xs ring-1 ring-inset ring-slate-600/40">
+							<span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+							<b className="font-semibold text-slate-100">
+								{data.totalActivities}
+							</b>
+							<span className="text-slate-400">records</span>
 						</span>
 						<span
-							className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+							className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs ring-1 ring-inset ${
 								data.totalErrors > 0
-									? "bg-red-500/10 text-red-400"
-									: "bg-emerald-500/10 text-emerald-400"
+									? "bg-red-500/10 text-red-300 ring-red-500/25"
+									: "bg-emerald-500/10 text-emerald-300 ring-emerald-500/25"
 							}`}
 						>
-							{data.totalErrors} errors
+							<span
+								className={`h-1.5 w-1.5 rounded-full ${
+									data.totalErrors > 0
+										? "bg-red-400"
+										: "bg-emerald-400"
+								}`}
+							/>
+							<b className="font-semibold">{data.totalErrors}</b>
+							<span className="opacity-75">errors</span>
 						</span>
 					</div>
 				</div>
 			</header>
 
 			{data.availableDays.length > 0 && (
-				<nav className="flex items-center gap-0.5 border-b border-slate-700/50 px-4 overflow-x-auto shrink-0 bg-slate-900/80">
+				<nav className="flex items-center gap-1 border-b border-slate-700/40 px-4 py-1.5 overflow-x-auto shrink-0 bg-slate-900/40">
 					{(() => {
 						const recentDays = data.availableDays.slice(0, 7);
 						const olderDays = data.availableDays.slice(7);
 						const currentIsOlder =
-							data.currentDay !== null && !recentDays.includes(data.currentDay);
+							data.currentDay !== null &&
+							!recentDays.includes(data.currentDay);
 						const fmtDay = (d: string) =>
-							new Date(d + "T12:00:00").toLocaleDateString("en-US", {
-								weekday: "short", month: "short", day: "numeric",
-							});
+							new Date(d + "T12:00:00").toLocaleDateString(
+								"en-US",
+								{
+									weekday: "short",
+									month: "short",
+									day: "numeric",
+								},
+							);
 						return (
 							<>
 								{currentIsOlder && (
 									<>
 										<button
-											onClick={() => switchDay(data.currentDay!)}
-											className="px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 -mb-px border-blue-500 text-blue-400"
+											onClick={() =>
+												switchDay(data.currentDay!)
+											}
+											className="rounded-full px-3.5 py-1.5 text-sm font-medium whitespace-nowrap bg-linear-to-r from-blue-500/20 to-indigo-500/10 text-blue-300 ring-1 ring-inset ring-blue-400/30"
 										>
 											{fmtDay(data.currentDay!)}
 										</button>
@@ -488,10 +558,10 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 										key={d}
 										onClick={() => switchDay(d)}
 										disabled={loadingDay !== null}
-										className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 -mb-px transition-colors ${
+										className={`rounded-full px-3.5 py-1.5 text-sm font-medium whitespace-nowrap transition-colors ${
 											d === data.currentDay
-												? "border-blue-500 text-blue-400"
-												: "border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600"
+												? "bg-linear-to-r from-blue-500/20 to-indigo-500/10 text-blue-300 ring-1 ring-inset ring-blue-400/30"
+												: "text-slate-400 hover:text-slate-200 hover:bg-slate-700/40"
 										} ${loadingDay === d ? "opacity-60" : ""}`}
 									>
 										{fmtDay(d)}
@@ -501,15 +571,24 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 									<>
 										<div className="w-px h-4 bg-slate-700 mx-1 shrink-0" />
 										<select
-											value={currentIsOlder ? (data.currentDay ?? "") : ""}
+											value={
+												currentIsOlder
+													? (data.currentDay ?? "")
+													: ""
+											}
 											onChange={(e) =>
-												e.target.value && switchDay(e.target.value)
+												e.target.value &&
+												switchDay(e.target.value)
 											}
 											className="ml-1 rounded-md border border-slate-600/60 bg-slate-800 px-2.5 py-1 text-xs text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500/40 focus:border-blue-500 cursor-pointer"
 										>
-											<option value="">Older logs…</option>
+											<option value="">
+												Older logs…
+											</option>
 											{olderDays.map((d) => (
-												<option key={d} value={d}>{fmtDay(d)}</option>
+												<option key={d} value={d}>
+													{fmtDay(d)}
+												</option>
 											))}
 										</select>
 									</>
@@ -550,9 +629,9 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 										<li key={run.id}>
 											<button
 												onClick={() => selectRun(run)}
-												className={`w-full text-left rounded-lg px-3 py-2.5 transition-colors ${
+												className={`w-full text-left rounded-xl px-3 py-2.5 transition-colors ${
 													selected
-														? "bg-blue-500/15 ring-1 ring-blue-400/30"
+														? "bg-linear-to-r from-blue-500/20 to-indigo-500/10 ring-1 ring-blue-400/30 shadow-lg shadow-blue-500/10"
 														: "hover:bg-slate-700/30"
 												}`}
 											>
@@ -572,7 +651,10 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 													{fmtTime(run.endMs)}
 												</div>
 												<div className="text-xs text-slate-400">
-													{run.records} records ·{" "}
+													<span className="font-bold">
+														{run.records}
+													</span>{" "}
+													records ·{" "}
 													{fmtDuration(
 														run.startMs,
 														run.endMs,
@@ -606,7 +688,8 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 					{/* Run summary */}
 					{selectedRun && (
 						<section
-							className={`flex items-center gap-4 px-4 py-3 mb-3 ${card}`}
+							key={selectedRun.id}
+							className={`flex items-center gap-4 px-4 py-3 mb-3 fade-in-up ${card}`}
 						>
 							<StatusPill
 								ok={selectedRun.errorCount === 0}
@@ -616,51 +699,55 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 										: "Completed with errors"
 								}
 							/>
-							<span className="text-slate-400 truncate">
+							<span className="text-slate-300 truncate">
 								{selectedRun.childPipeline}
 							</span>
-							<div className="ml-auto flex items-center gap-6">
+							<div className="ml-auto flex items-center gap-2.5">
 								{[
 									[
 										"Records",
 										selectedRun.records,
-										"text-slate-100",
+										"from-sky-500/25 to-indigo-500/10 border-sky-400/20",
+										"text-sky-200",
 									],
 									[
 										"Success",
 										selectedRun.successCount,
-										"text-emerald-400",
+										"from-emerald-500/25 to-teal-500/10 border-emerald-400/20",
+										"text-emerald-200",
 									],
 									[
 										"Errors",
 										selectedRun.errorCount,
+										"from-rose-500/25 to-orange-500/10 border-rose-400/20",
 										selectedRun.errorCount > 0
-											? "text-red-400"
-											: "text-slate-100",
+											? "text-rose-200"
+											: "text-slate-300",
 									],
-								].map(([label, value, color]) => (
-									<div key={label} className="text-center">
+									[
+										"Duration",
+										fmtDuration(
+											selectedRun.startMs,
+											selectedRun.endMs,
+										),
+										"from-violet-500/25 to-fuchsia-500/10 border-violet-400/20",
+										"text-violet-200",
+									],
+								].map(([label, value, grad, text]) => (
+									<div
+										key={label}
+										className={`min-w-[96px] rounded-2xl border px-4 py-2.5 text-center bg-linear-to-br shadow-lg shadow-black/10 ${grad}`}
+									>
 										<div
-											className={`text-lg font-semibold leading-tight ${color}`}
+											className={`text-2xl font-bold leading-none ${text}`}
 										>
 											{value}
 										</div>
-										<div className="text-[10px] uppercase tracking-wider text-slate-400">
+										<div className="mt-1 text-[10px] uppercase tracking-wider text-slate-300/60">
 											{label}
 										</div>
 									</div>
 								))}
-								<div className="text-center">
-									<div className="text-lg font-semibold leading-tight text-slate-100">
-										{fmtDuration(
-											selectedRun.startMs,
-											selectedRun.endMs,
-										)}
-									</div>
-									<div className="text-[10px] uppercase tracking-wider text-slate-400">
-										Duration
-									</div>
-								</div>
 							</div>
 						</section>
 					)}
@@ -668,7 +755,7 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 					{/* Activity groups */}
 					<section className={`flex-1 flex flex-col min-h-0 ${card}`}>
 						<PanelTitle title="Activity Log" />
-						<div className="flex-1 overflow-y-auto">
+						<div ref={activityLogRef} className="flex-1 overflow-y-auto">
 							{selectedRun?.groups.map((group) => {
 								const list = visibleActivities(group);
 								if (
@@ -729,46 +816,79 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 									);
 								if (isFlatRecordList) {
 									return (
-										<table key={group.name} className="w-full text-xs">
+										<table
+											key={group.name}
+											className="w-full text-xs"
+										>
 											<tbody>
 												{list.map((a) => {
-													const failed = a.status !== "Succeeded";
-													const selected = a.id === selectedActivityId;
+													const failed =
+														a.status !==
+														"Succeeded";
+													const selected =
+														a.id ===
+														selectedActivityId;
 													const meta = a.recordMeta
-														.map(([k, v]) => `${k.replace(/[:\s]+$/, "")}: ${v}`)
+														.map(
+															([k, v]) =>
+																`${k.replace(/[:\s]+$/, "")}: ${v}`,
+														)
 														.join(" · ");
 													return (
 														<tr
 															key={a.id}
-															onClick={() => setSelectedActivityId(a.id)}
-															className={`cursor-pointer border-b border-slate-700/40 last:border-0 ${
+															data-aid={a.id}
+															onClick={() =>
+																setSelectedActivityId(
+																	a.id,
+																)
+															}
+															className={`cursor-pointer border-b border-slate-700/40 last:border-0 transition-colors ${
 																selected
-																	? "bg-blue-500/15"
+																	? "bg-blue-500/15 shadow-[inset_3px_0_0_0_#60a5fa]"
 																	: failed
 																		? "bg-red-500/5 hover:bg-red-500/10"
 																		: "hover:bg-slate-700/30"
 															}`}
 														>
 															<td className="pl-4 pr-2 py-1.5 w-8">
-																<StatusDot ok={!failed} />
+																<StatusDot
+																	ok={!failed}
+																/>
 															</td>
 															<td className="px-2 py-1.5 whitespace-nowrap font-mono text-slate-400">
-																{fmtTime(a.startMs)}
+																{fmtTime(
+																	a.startMs,
+																)}
 															</td>
 															<td className="px-2 py-1.5 whitespace-nowrap">
-																{a.httpStatus && <HttpStatusPill code={a.httpStatus} />}
+																{a.httpStatus && (
+																	<HttpStatusPill
+																		code={
+																			a.httpStatus
+																		}
+																	/>
+																)}
 															</td>
 															<td
 																className={`w-full px-2 py-1.5 truncate ${
-																	failed ? "text-red-400 font-medium" : "text-slate-400"
+																	failed
+																		? "text-red-400 font-medium"
+																		: "text-slate-400"
 																}`}
 															>
 																{failed
-																	? (a.errorMessages[0] ?? "Failed — no error detail logged")
-																	: meta || "Completed"}
+																	? (a
+																			.errorMessages[0] ??
+																		"Failed — no error detail logged")
+																	: meta ||
+																		"Completed"}
 															</td>
 															<td className="px-2 py-1.5 whitespace-nowrap text-right text-slate-400">
-																{fmtDuration(a.startMs, a.endMs)}
+																{fmtDuration(
+																	a.startMs,
+																	a.endMs,
+																)}
 															</td>
 														</tr>
 													);
@@ -841,31 +961,46 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 														return (
 															<tr
 																key={a.id}
+																data-aid={a.id}
 																onClick={() =>
 																	setSelectedActivityId(
 																		a.id,
 																	)
 																}
-																className={`cursor-pointer border-t border-slate-700/40 ${
+																className={`cursor-pointer border-t border-slate-700/40 transition-colors ${
 																	selected
-																		? "bg-blue-500/15"
+																		? "bg-blue-500/15 shadow-[inset_3px_0_0_0_#60a5fa]"
 																		: failed
 																			? "bg-red-500/5 hover:bg-red-500/10"
 																			: "hover:bg-slate-700/30"
 																}`}
 															>
 																<td className="pl-11 pr-2 py-1.5 w-8">
-																	<StatusDot ok={!failed} />
+																	<StatusDot
+																		ok={
+																			!failed
+																		}
+																	/>
 																</td>
 																<td className="px-2 py-1.5 whitespace-nowrap font-mono text-slate-400">
-																	{fmtTime(a.startMs)}
+																	{fmtTime(
+																		a.startMs,
+																	)}
 																</td>
 																<td className="px-2 py-1.5 whitespace-nowrap">
-																	{a.httpStatus && <HttpStatusPill code={a.httpStatus} />}
+																	{a.httpStatus && (
+																		<HttpStatusPill
+																			code={
+																				a.httpStatus
+																			}
+																		/>
+																	)}
 																</td>
 																<td
 																	className={`w-full px-2 py-1.5 truncate ${
-																		failed ? "text-red-400 font-medium" : "text-slate-400"
+																		failed
+																			? "text-red-400 font-medium"
+																			: "text-slate-400"
 																	}`}
 																>
 																	{group.isRecordGroup
@@ -873,15 +1008,46 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 																			? `${a.activityName} — ${a.errorMessages[0] ?? "Failed"}`
 																			: a.activityName
 																		: failed
-																			? (a.errorMessages[0] ?? "Failed — no error detail logged")
-																			: a.recordMeta.length > 0
-																				? a.recordMeta.map(([k, v]) => `${k} ${v}`).join(" · ")
-																				: a.metrics.length > 0
-																					? a.metrics.map(([k, v]) => `${k} ${v}`).join(" · ")
+																			? (a
+																					.errorMessages[0] ??
+																				"Failed — no error detail logged")
+																			: a
+																						.recordMeta
+																						.length >
+																				  0
+																				? a.recordMeta
+																						.map(
+																							([
+																								k,
+																								v,
+																							]) =>
+																								`${k} ${v}`,
+																						)
+																						.join(
+																							" · ",
+																						)
+																				: a
+																							.metrics
+																							.length >
+																					  0
+																					? a.metrics
+																							.map(
+																								([
+																									k,
+																									v,
+																								]) =>
+																									`${k} ${v}`,
+																							)
+																							.join(
+																								" · ",
+																							)
 																					: "Completed"}
 																</td>
 																<td className="px-2 py-1.5 whitespace-nowrap text-right text-slate-400">
-																	{fmtDuration(a.startMs, a.endMs)}
+																	{fmtDuration(
+																		a.startMs,
+																		a.endMs,
+																	)}
 																</td>
 															</tr>
 														);
@@ -893,10 +1059,40 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 								);
 							})}
 							{!selectedRun && (
-								<p className="p-4 text-slate-400">
-									Select an integration within the
-									integrations pane.
-								</p>
+								<div className="flex h-full flex-col items-center justify-center gap-3 py-16 text-slate-500">
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="1.5"
+										className="h-10 w-10 opacity-40"
+									>
+										<rect
+											x="3"
+											y="4"
+											width="18"
+											height="16"
+											rx="2"
+										/>
+										<path d="M3 9h18M8 14h8M8 17h5" />
+									</svg>
+									<p className="text-sm">
+										Select an integration to view its
+										activity.
+									</p>
+								</div>
+							)}
+							{selectedRun && navActivities.length === 0 && (
+								<EmptyHint
+									label={
+										searchLower
+											? `No results for "${search.trim()}"`
+											: errorsOnly
+												? "No errors in this integration."
+												: "No records to show."
+									}
+								/>
 							)}
 						</div>
 					</section>
@@ -980,9 +1176,7 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 										)}
 									</div>
 								) : (
-									<p className="p-4 text-slate-400 text-xs">
-										Select a record to inspect its request.
-									</p>
+									<EmptyHint label="Select a record to inspect its request." />
 								)}
 							</section>
 						)}
@@ -1016,12 +1210,12 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 								/>
 								{selectedActivity?.sql ? (
 									<SqlView sql={selectedActivity.sql} />
-								) : (
+								) : selectedActivity ? (
 									<pre className="flex-1 overflow-auto px-4 py-3 text-xs font-mono text-slate-200 whitespace-pre-wrap">
-										{selectedActivity
-											? selectedActivity.bodyRaw
-											: "Select a record to view its payload."}
+										{selectedActivity.bodyRaw}
 									</pre>
+								) : (
+									<EmptyHint label="Select a record to view its payload." />
 								)}
 							</section>
 						)}
@@ -1113,9 +1307,7 @@ export default function Dashboard({ data: initialData }: { data: DashboardData }
 											)}
 									</div>
 								) : (
-									<p className="p-4 text-slate-400 text-xs">
-										Select a record to view its response.
-									</p>
+									<EmptyHint label="Select a record to view its response." />
 								)}
 							</section>
 						)}
