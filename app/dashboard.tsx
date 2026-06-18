@@ -754,7 +754,41 @@ export default function Dashboard({
 
 					{/* Activity groups */}
 					<section className={`flex-1 flex flex-col min-h-0 ${card}`}>
-						<PanelTitle title="Activity Log" />
+						<PanelTitle title="Activity Log">
+							{selectedRun?.groups.some(
+								(g) =>
+									g.activityType !== "ForEach" &&
+									!isFlatGroup(g),
+							) && (
+								<div className="ml-auto flex items-center gap-1.5">
+									<button
+										onClick={() =>
+											setOpenGroups(
+												new Set(
+													selectedRun.groups
+														.filter(
+															(g) =>
+																g.activityType !==
+																	"ForEach" &&
+																!isFlatGroup(g),
+														)
+														.map((g) => g.name),
+												),
+											)
+										}
+										className="rounded-md px-2 py-0.5 text-[11px] font-medium text-slate-400 hover:bg-slate-700/40 hover:text-slate-200"
+									>
+										Expand all
+									</button>
+									<button
+										onClick={() => setOpenGroups(new Set())}
+										className="rounded-md px-2 py-0.5 text-[11px] font-medium text-slate-400 hover:bg-slate-700/40 hover:text-slate-200"
+									>
+										Collapse all
+									</button>
+								</div>
+							)}
+						</PanelTitle>
 						<div ref={activityLogRef} className="flex-1 overflow-y-auto">
 							{selectedRun?.groups.map((group) => {
 								const list = visibleActivities(group);
