@@ -1,4 +1,4 @@
-import { isBlobConfigured, listAvailableDays, loadDayCsv } from "@/lib/blob";
+import { isBlobConfigured, loadDayCsv } from "@/lib/blob";
 import { parseDashboardData } from "@/lib/data";
 
 export const dynamic = "force-dynamic";
@@ -13,13 +13,19 @@ export async function GET(request: Request) {
     return Response.json({ error: "Invalid day" }, { status: 400 });
   }
 
-  const availableDays = await listAvailableDays();
-  if (!availableDays.includes(day)) {
-    return Response.json({ error: "Day not found" }, { status: 404 });
+  // No container listing here: the client only switches to days it already knows
+  // exist, and it ignores availableDays in this response (it keeps its own list).
+  // A missing blob 404s via the download below, so the list scan is pure overhead.
+  let csvText: string;
+  try {
+    csvText = await loadDayCsv(day);
+  } catch (e) {
+    if ((e as { statusCode?: number }).statusCode === 404) {
+      return Response.json({ error: "Day not found" }, { status: 404 });
+    }
+    throw e;
   }
-
-  const csvText = await loadDayCsv(day);
-  const data = parseDashboardData(csvText, `${day}.csv`, availableDays, day);
+  const data = parseDashboardData(csvText, `${day}.csv`, [], day);
 
   // Each day's blob is written once by the Logic App and never changes, so the
   // content can be cached by the browser/CDN indefinitely.

@@ -736,7 +736,7 @@ export default function Dashboard({
 								].map(([label, value, grad, text]) => (
 									<div
 										key={label}
-										className={`min-w-[96px] rounded-2xl border px-4 py-2.5 text-center bg-linear-to-br shadow-lg shadow-black/10 ${grad}`}
+										className={`min-w-24 rounded-2xl border px-4 py-2.5 text-center bg-linear-to-br shadow-lg shadow-black/10 ${grad}`}
 									>
 										<div
 											className={`text-2xl font-bold leading-none ${text}`}
