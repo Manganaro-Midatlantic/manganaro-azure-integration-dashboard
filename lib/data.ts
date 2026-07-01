@@ -558,7 +558,7 @@ export function parseDashboardData(
     const { records, successCount, errorCount } = countRecords(groups);
     runs.push({
       id: `orphan-${pipe}`,
-      name: `${pipe} (standalone)`,
+      name: `${pipe}`,
       childPipeline: pipe,
       // any failed step flags the run, even if it isn't the widest group
       status: groups.some((g) => g.errorCount > 0) ? "Failed" : "Succeeded",
