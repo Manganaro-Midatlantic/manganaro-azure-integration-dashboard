@@ -50,6 +50,21 @@ function parseCsv(text: string): string[][] {
   return rows;
 }
 
+/** Serialize rows to RFC-4180 CSV. Object/array cells become JSON text (matching
+ *  how the Logic App writes ADF's dynamic Input/Output columns); null/undefined → "". */
+export function toCsv(header: string[], rows: unknown[][]): string {
+  const cell = (v: unknown): string => {
+    const s =
+      v === null || v === undefined
+        ? ""
+        : typeof v === "object"
+          ? JSON.stringify(v)
+          : String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  return [header, ...rows].map((r) => r.map(cell).join(",")).join("\n");
+}
+
 /** Parses both ISO 8601 ("2026-06-12T00:02:17.0000000") and US locale ("6/12/2026, 12:02:17.000 AM") */
 function parseTimestamp(text: string): number {
   // ISO 8601 from Logic App / KQL datetime_utc_to_local
@@ -266,6 +281,14 @@ const RECORD_META_RULES: Record<string, MetaRule[]> = {
     { label: "Company Supplied ID: ", from: (b) => asText(b.company_supplied_id) },
     { label: "Group IDs: ", from: (b) => asText(b.company_group_ids) },
   ],
+  "POST inactive employees": [
+    {
+      label: "Name: ",
+      from: (b) =>
+        asText([asText(b.first_name), asText(b.last_name)].filter(Boolean).join(" ")),
+    },
+    { label: "Company Supplied ID: ", from: (b) => asText(b.company_supplied_id) },
+  ],
 };
 
 function extractRecordMeta(activityName: string, body: unknown): [string, string][] {
@@ -469,7 +492,7 @@ function countRecords(groups: ActivityGroup[]): {
 }
 
 /** Activity names to hide from the dashboard entirely (e.g. lookups being retired). */
-const HIDDEN_ACTIVITY_NAMES = new Set(["Check for new Budgets", "For Each new Budget", "Check for new Projects", "For Each New Project", "Check for new Cost Code Status", "For Each new Cost Code Status", "Check for new Cost Codes", "For Each new Cost Code"]);
+const HIDDEN_ACTIVITY_NAMES = new Set(["Check for new Budgets", "For Each new Budget", "Check for new Projects", "For Each New Project", "Check for new Cost Code Status", "For Each new Cost Code Status", "Check for new Cost Codes", "For Each new Cost Code", "For each inactive employee"]);
 
 /** Parse CSV text into a DashboardData object */
 export function parseDashboardData(

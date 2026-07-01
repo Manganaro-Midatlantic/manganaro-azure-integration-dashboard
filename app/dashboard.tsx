@@ -9,6 +9,14 @@ import type {
 	IntegrationRun,
 } from "@/lib/types";
 import { clamp, flatten, fmtDuration, fmtTime } from "@/lib/format";
+import type { SavedLog } from "./actions";
+import {
+	getRunStatus,
+	listSavedLogs,
+	loadRunLog,
+	triggerPipeline,
+	viewRunLog,
+} from "./actions";
 
 function StatusDot({ ok }: { ok: boolean }) {
 	return (
@@ -17,6 +25,220 @@ function StatusDot({ ok }: { ok: boolean }) {
 				ok ? "bg-emerald-500" : "bg-red-500"
 			}`}
 		/>
+	);
+}
+
+const TERMINAL = new Set(["Succeeded", "Failed", "Cancelled"]);
+
+function RunNowButton({
+	pipeline,
+	onShowLog,
+}: {
+	pipeline: string;
+	onShowLog: (data: DashboardData, path: string) => void;
+}) {
+	// null = idle; "Starting…" while triggering; then the live ADF run status.
+	const [status, setStatus] = useState<string | null>(null);
+	const [error, setError] = useState("");
+	const [runId, setRunId] = useState<string | null>(null);
+	const [logState, setLogState] = useState<"idle" | "loading" | "empty">("idle");
+	const busy = status !== null && status !== "Failed" && !TERMINAL.has(status);
+	const terminal = status !== null && TERMINAL.has(status);
+
+	const viewLogs = async () => {
+		if (!runId || logState === "loading") return;
+		setLogState("loading");
+		try {
+			const res = await viewRunLog(pipeline, runId);
+			if ("error" in res) throw new Error(res.error);
+			if ("empty" in res) {
+				setLogState("empty");
+				return;
+			}
+			setLogState("idle");
+			onShowLog(res.data, res.path);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "Failed to load logs");
+			setLogState("idle");
+		}
+	};
+
+	// Poll ADF run status until the run reaches a terminal state.
+	useEffect(() => {
+		if (!runId) return;
+		let alive = true;
+		const tick = async () => {
+			try {
+				const data = await getRunStatus(runId);
+				if (data.error) throw new Error(data.error);
+				if (!alive) return;
+				setStatus(data.status ?? null);
+				if (data.status && TERMINAL.has(data.status)) clearInterval(id);
+			} catch (e) {
+				if (alive) setError(e instanceof Error ? e.message : "Status check failed");
+			}
+		};
+		const id = setInterval(tick, 3000);
+		tick();
+		return () => {
+			alive = false;
+			clearInterval(id);
+		};
+	}, [runId]);
+
+	// On mount/refresh, resume the pipeline's last run from storage: fetch its
+	// status and show it, resuming live polling if it's still running.
+	useEffect(() => {
+		const key = `runId:${pipeline}`;
+		const stored = localStorage.getItem(key);
+		if (!stored) return;
+		let alive = true;
+		getRunStatus(stored).then((res) => {
+			if (!alive) return;
+			if (res.error || !res.status) {
+				localStorage.removeItem(key); // stale/unknown run
+				setStatus(null);
+				return;
+			}
+			setStatus(res.status);
+			setRunId(stored); // resumes polling if running; enables View logs if done
+		});
+		return () => {
+			alive = false;
+		};
+	}, [pipeline]);
+
+	const run = async () => {
+		if (busy) return;
+		let secret = sessionStorage.getItem("runSecret") ?? "";
+		if (!secret) {
+			secret = window.prompt("Run password") ?? "";
+			if (!secret) return; // cancelled
+			sessionStorage.setItem("runSecret", secret);
+		}
+		setStatus("Starting…");
+		setError("");
+		setRunId(null);
+		try {
+			const data = await triggerPipeline(pipeline, secret);
+			if (data.error === "Unauthorized") sessionStorage.removeItem("runSecret");
+			if (data.error || !data.runId) throw new Error(data.error ?? "Trigger failed");
+			setStatus("Queued");
+			setRunId(data.runId); // kicks off the polling effect
+			localStorage.setItem(`runId:${pipeline}`, data.runId); // survive refresh
+		} catch (e) {
+			setStatus("Failed");
+			setError(e instanceof Error ? e.message : "Trigger failed");
+		}
+	};
+
+	const failed = status === "Failed" || error !== "";
+	const succeeded = status === "Succeeded";
+	const label =
+		status === null
+			? "Run now"
+			: status === "Starting…"
+				? "Starting…"
+				: succeeded
+					? "✓ Succeeded"
+					: failed
+						? error
+							? "Retry run"
+							: "✗ Failed"
+						: `${status}…`; // Queued, InProgress, Cancelling, …
+
+	return (
+		<div className="shrink-0 flex items-center gap-2">
+			<button
+				onClick={run}
+				disabled={busy}
+				title={error || `Trigger ${pipeline} now`}
+				className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold shadow-sm transition disabled:opacity-70 ${
+					failed
+						? "bg-red-500/15 text-red-300 ring-1 ring-red-500/30 hover:bg-red-500/25"
+						: succeeded
+							? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30 hover:bg-emerald-500/25"
+							: "bg-slate-700 text-sky-300 ring-1 ring-sky-500/40 hover:bg-slate-600 hover:text-sky-200"
+				}`}
+			>
+				{status === null && <span className="text-base leading-none">▶</span>}
+				{label}
+			</button>
+			{terminal && (
+				<button
+					onClick={viewLogs}
+					disabled={logState === "loading"}
+					title={
+						logState === "empty"
+							? "No matching activities logged for this run"
+							: "Load this run's activity logs"
+					}
+					className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold shadow-sm transition disabled:opacity-70 bg-slate-700 text-slate-200 ring-1 ring-slate-500/40 hover:bg-slate-600"
+				>
+					{logState === "loading"
+						? "Loading…"
+						: logState === "empty"
+							? "No logs"
+							: "View logs"}
+				</button>
+			)}
+		</div>
+	);
+}
+
+/** Native select of previously-captured run logs (from blob), grouped by integration.
+ *  Native dropdown so it renders above the nav's overflow clip, and matches the day
+ *  picker's "Older logs…" select styling. */
+function SavedRunsMenu({
+	onOpen,
+}: {
+	onOpen: (data: DashboardData, path: string) => void;
+}) {
+	const [logs, setLogs] = useState<SavedLog[]>([]);
+
+	const load = () => {
+		listSavedLogs()
+			.then(setLogs)
+			.catch(() => setLogs([]));
+	};
+	useEffect(load, []);
+
+	const pick = async (path: string) => {
+		const res = await loadRunLog(path);
+		if ("data" in res) onOpen(res.data, path);
+	};
+
+	// Group by pipeline, preserving the newest-first order from the server.
+	const groups: [string, SavedLog[]][] = [];
+	const byPipe = new Map<string, SavedLog[]>();
+	for (const l of logs) {
+		let g = byPipe.get(l.pipeline);
+		if (!g) {
+			g = [];
+			byPipe.set(l.pipeline, g);
+			groups.push([l.pipeline, g]);
+		}
+		g.push(l);
+	}
+
+	return (
+		<select
+			value=""
+			onMouseDown={load} // refresh so newly-captured runs appear
+			onChange={(e) => e.target.value && pick(e.target.value)}
+			className="ml-1 rounded-md border border-slate-600/60 bg-slate-800 px-2.5 py-1 text-xs text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500/40 focus:border-blue-500 cursor-pointer"
+		>
+			<option value="">Saved runs…</option>
+			{groups.map(([pipe, items]) => (
+				<optgroup key={pipe} label={pipe}>
+					{items.map((l) => (
+						<option key={l.path} value={l.path}>
+							{l.date} · {l.time}
+						</option>
+					))}
+				</optgroup>
+			))}
+		</select>
 	);
 }
 
@@ -293,6 +515,35 @@ export default function Dashboard({
 	const [selectedActivityId, setSelectedActivityId] = useState<string | null>(
 		null,
 	);
+
+	// When viewing a captured run log, remember the view to return to.
+	const [logView, setLogView] = useState<{
+		path: string;
+		prev: DashboardData;
+	} | null>(null);
+
+	const showRunLog = useCallback(
+		(logData: DashboardData, path: string) => {
+			// Keep the original day as the return target even across log→log jumps.
+			setLogView((cur) => ({ path, prev: cur?.prev ?? data }));
+			setData({ ...logData, availableDays: availableDays.current });
+			setSelectedRunId(logData.runs[0]?.id); // auto-open so activities show
+			setSelectedActivityId(null);
+		},
+		[data],
+	);
+
+	const exitLogView = useCallback(() => {
+		setLogView((cur) => {
+			if (cur) {
+				setData(cur.prev);
+				setSelectedRunId(undefined);
+				setSelectedActivityId(null);
+			}
+			return null;
+		});
+	}, []);
+
 	const [errorsOnly, setErrorsOnly] = useState(false);
 	const [search, setSearch] = useState("");
 	const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
@@ -521,7 +772,33 @@ export default function Dashboard({
 				</div>
 			</header>
 
-			{data.availableDays.length > 0 && (
+			{logView && (
+				<div className="flex items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 shrink-0">
+					<span className="text-base leading-none">📄</span>
+					<span className="text-sm text-amber-100">
+						Viewing saved run log
+						<span className="ml-2 font-semibold">
+							{(() => {
+								const [pipe, file] = logView.path.split("/");
+								const m = file?.match(
+									/(\d{4}-\d{2}-\d{2})_(\d{2})(\d{2})/,
+								);
+								return m
+									? `${pipe} · ${m[1]} ${m[2]}:${m[3]}`
+									: logView.path;
+							})()}
+						</span>
+					</span>
+					<button
+						onClick={exitLogView}
+						className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-slate-700 px-3.5 py-1.5 text-sm font-semibold text-slate-100 ring-1 ring-slate-500/40 transition hover:bg-slate-600"
+					>
+						← Back to dashboard
+					</button>
+				</div>
+			)}
+
+			{!logView && data.availableDays.length > 0 && (
 				<nav className="flex items-center gap-1 border-b border-slate-700/40 px-4 py-1.5 overflow-x-auto shrink-0 bg-slate-900/40">
 					{(() => {
 						const recentDays = data.availableDays.slice(0, 7);
@@ -596,7 +873,9 @@ export default function Dashboard({
 							</>
 						);
 					})()}
-				</nav>
+				<div className="w-px h-4 bg-slate-700 mx-1 shrink-0" />
+						<SavedRunsMenu onOpen={showRunLog} />
+					</nav>
 			)}
 
 			<div className="flex flex-1 p-3 min-h-0">
@@ -702,6 +981,12 @@ export default function Dashboard({
 							<span className="text-slate-300 truncate">
 								{selectedRun.childPipeline}
 							</span>
+							{!logView && (
+								<RunNowButton
+									pipeline={selectedRun.childPipeline}
+									onShowLog={showRunLog}
+								/>
+							)}
 							<div className="ml-auto flex items-center gap-2.5">
 								{[
 									[

@@ -1,4 +1,5 @@
 import { BlobServiceClient } from "@azure/storage-blob";
+import { storageCredential } from "./adf";
 
 const account = process.env.STORAGE_ACCOUNT_NAME!;
 const sas = process.env.STORAGE_ACCOUNT_SAS_URL!;
@@ -55,4 +56,45 @@ export async function loadDayCsv(day: string): Promise<string> {
   const text = Buffer.concat(chunks).toString("utf8");
   csvCache.set(day, text);
   return text;
+}
+
+/** Run-log blob name shape: "{pipeline}/{date}_{HHMM}.csv" (the per-run captures). */
+const RUN_LOG_NAME = /^[^/]+\/\d{4}-\d{2}-\d{2}_\d{4}\.csv$/;
+
+/** List saved per-run log blob names, newest first. Excludes the root daily CSVs. */
+export async function listRunLogs(): Promise<string[]> {
+  const container = getServiceClient().getContainerClient(CONTAINER);
+  const names: string[] = [];
+  for await (const blob of container.listBlobsFlat()) {
+    if (RUN_LOG_NAME.test(blob.name)) names.push(blob.name);
+  }
+  // Names embed date_HHMM, so a plain descending sort is newest-first per pipeline.
+  names.sort((a, b) => b.localeCompare(a));
+  return names;
+}
+
+/** Download a blob's text by its full name (e.g. a run-log path). */
+export async function loadBlobText(name: string): Promise<string> {
+  const blob = getServiceClient().getContainerClient(CONTAINER).getBlobClient(name);
+  const download = await blob.download();
+  const stream = download.readableStreamBody;
+  if (!stream) throw new Error(`Empty blob ${name}`);
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream as AsyncIterable<Buffer>) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/** Write a CSV blob (e.g. "MyPipeline/2026-06-30_0802.csv") using the service
+ *  principal — needs the "Storage Blob Data Contributor" role on the account. */
+export async function uploadCsv(blobName: string, text: string): Promise<void> {
+  const client = new BlobServiceClient(
+    `https://${account}.blob.core.windows.net`,
+    storageCredential(),
+  );
+  const blob = client.getContainerClient(CONTAINER).getBlockBlobClient(blobName);
+  await blob.upload(text, Buffer.byteLength(text), {
+    blobHTTPHeaders: { blobContentType: "text/csv" },
+  });
 }
