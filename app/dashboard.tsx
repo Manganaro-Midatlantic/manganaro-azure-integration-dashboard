@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import MicroModal from "micromodal";
 import type {
 	ActivityGroup,
 	ActivityRun,
@@ -10,728 +9,21 @@ import type {
 	IntegrationRun,
 } from "@/lib/types";
 import { clamp, flatten, fmtDuration, fmtTime } from "@/lib/format";
-import type { SavedLog } from "./actions";
 import {
-	getRunStatus,
-	listSavedLogs,
-	loadRunLog,
-	triggerPipeline,
-	viewRunLog,
-} from "./actions";
-
-function StatusDot({ ok }: { ok: boolean }) {
-	return (
-		<span
-			className={`inline-block w-2 h-2 rounded-full shrink-0 ${
-				ok ? "bg-emerald-500" : "bg-red-500"
-			}`}
-		/>
-	);
-}
-
-const TERMINAL = new Set(["Succeeded", "Failed", "Cancelled"]);
-
-function RunNowButton({
-	pipeline,
-	onShowLog,
-}: {
-	pipeline: string;
-	onShowLog: (data: DashboardData, path: string) => void;
-}) {
-	// null = idle; "Starting…" while triggering; then the live ADF run status.
-	const [status, setStatus] = useState<string | null>(null);
-	const [error, setError] = useState("");
-	const [runId, setRunId] = useState<string | null>(null);
-	const [logState, setLogState] = useState<"idle" | "loading" | "empty">("idle");
-	const busy = status !== null && status !== "Failed" && !TERMINAL.has(status);
-	const terminal = status !== null && TERMINAL.has(status);
-
-	const viewLogs = async () => {
-		if (!runId || logState === "loading") return;
-		setLogState("loading");
-		try {
-			const res = await viewRunLog(pipeline, runId);
-			if ("error" in res) throw new Error(res.error);
-			if ("empty" in res) {
-				setLogState("empty");
-				return;
-			}
-			setLogState("idle");
-			onShowLog(res.data, res.path);
-		} catch (e) {
-			setError(e instanceof Error ? e.message : "Failed to load logs");
-			setLogState("idle");
-		}
-	};
-
-	// Poll ADF run status until the run reaches a terminal state.
-	useEffect(() => {
-		if (!runId) return;
-		let alive = true;
-		const tick = async () => {
-			try {
-				const data = await getRunStatus(runId);
-				if (data.error) throw new Error(data.error);
-				if (!alive) return;
-				setStatus(data.status ?? null);
-				if (data.status && TERMINAL.has(data.status)) clearInterval(id);
-			} catch (e) {
-				if (alive) setError(e instanceof Error ? e.message : "Status check failed");
-			}
-		};
-		const id = setInterval(tick, 3000);
-		tick();
-		return () => {
-			alive = false;
-			clearInterval(id);
-		};
-	}, [runId]);
-
-	// On mount/refresh, resume the pipeline's last run from storage: fetch its
-	// status and show it, resuming live polling if it's still running.
-	useEffect(() => {
-		const key = `runId:${pipeline}`;
-		const stored = localStorage.getItem(key);
-		if (!stored) return;
-		let alive = true;
-		getRunStatus(stored).then((res) => {
-			if (!alive) return;
-			if (res.error || !res.status) {
-				localStorage.removeItem(key); // stale/unknown run
-				setStatus(null);
-				return;
-			}
-			setStatus(res.status);
-			setRunId(stored); // resumes polling if running; enables View logs if done
-		});
-		return () => {
-			alive = false;
-		};
-	}, [pipeline]);
-
-	const run = async () => {
-		if (busy) return;
-		let secret = sessionStorage.getItem("runSecret") ?? "";
-		if (!secret) {
-			secret = window.prompt("Run password") ?? "";
-			if (!secret) return; // cancelled
-			sessionStorage.setItem("runSecret", secret);
-		}
-		setStatus("Starting…");
-		setError("");
-		setRunId(null);
-		try {
-			const data = await triggerPipeline(pipeline, secret);
-			if (data.error === "Unauthorized") sessionStorage.removeItem("runSecret");
-			if (data.error || !data.runId) throw new Error(data.error ?? "Trigger failed");
-			setStatus("Queued");
-			setRunId(data.runId); // kicks off the polling effect
-			localStorage.setItem(`runId:${pipeline}`, data.runId); // survive refresh
-		} catch (e) {
-			setStatus("Failed");
-			setError(e instanceof Error ? e.message : "Trigger failed");
-		}
-	};
-
-	const failed = status === "Failed" || error !== "";
-	const succeeded = status === "Succeeded";
-	const label =
-		status === null
-			? "Run now"
-			: status === "Starting…"
-				? "Starting…"
-				: succeeded
-					? "✓ Succeeded"
-					: failed
-						? error
-							? "Retry run"
-							: "✗ Failed"
-						: `${status}…`; // Queued, InProgress, Cancelling, …
-
-	return (
-		<div className="shrink-0 flex items-center gap-2">
-			<button
-				onClick={run}
-				disabled={busy}
-				title={error || `Trigger ${pipeline} now`}
-				className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold shadow-sm transition disabled:opacity-70 ${
-					failed
-						? "bg-red-500/15 text-red-300 ring-1 ring-red-500/30 hover:bg-red-500/25"
-						: succeeded
-							? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30 hover:bg-emerald-500/25"
-							: "bg-slate-700 text-sky-300 ring-1 ring-sky-500/40 hover:bg-slate-600 hover:text-sky-200"
-				}`}
-			>
-				{status === null && <span className="text-base leading-none">▶</span>}
-				{label}
-			</button>
-			{terminal && (
-				<button
-					onClick={viewLogs}
-					disabled={logState === "loading"}
-					title={
-						logState === "empty"
-							? "No matching activities logged for this run"
-							: "Load this run's activity logs"
-					}
-					className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold shadow-sm transition disabled:opacity-70 bg-slate-700 text-slate-200 ring-1 ring-slate-500/40 hover:bg-slate-600"
-				>
-					{logState === "loading"
-						? "Loading…"
-						: logState === "empty"
-							? "No logs"
-							: "View logs"}
-				</button>
-			)}
-		</div>
-	);
-}
-
-/** "2026-06-30" → "Tue, Jun 30" (shared by the day picker and saved runs). */
-function fmtDay(d: string): string {
-	return new Date(d + "T12:00:00").toLocaleDateString("en-US", {
-		weekday: "short",
-		month: "short",
-		day: "numeric",
-	});
-}
-
-/** "HH:MM" (24h) → 12-hour with AM/PM, e.g. "13:24" → "1:24 PM". */
-function fmt12h(hhmm: string): string {
-	const [h, m] = hhmm.split(":");
-	const hour = Number(h);
-	const ampm = hour < 12 ? "AM" : "PM";
-	const h12 = hour % 12 === 0 ? 12 : hour % 12;
-	return `${h12}:${m} ${ampm}`;
-}
-
-/** One activity row in the compact modal preview. */
-function RunLogRow({ activity: a }: { activity: ActivityRun }) {
-	const label =
-		a.recordMeta.length > 0
-			? a.recordMeta.map(([k, v]) => `${k}${v}`).join(" ")
-			: a.activityName;
-	return (
-		<div className="border-t border-slate-800/50 py-1.5 pr-3 pl-7">
-			<div className="flex items-center gap-2">
-				<StatusDot ok={a.status === "Succeeded"} />
-				<span className="min-w-0 flex-1 truncate text-xs text-slate-200">{label}</span>
-				<span className="shrink-0 text-xs text-slate-500">
-					{fmtDuration(a.startMs, a.endMs)}
-				</span>
-			</div>
-			{a.errorMessages.length > 0 && (
-				<div className="pl-4 text-xs text-red-400">{a.errorMessages.join("; ")}</div>
-			)}
-		</div>
-	);
-}
-
-/** One group in the compact modal preview. Flat groups (single-step records) show
- *  rows directly; record/name groups collapse — same behavior as the main UI. */
-function RunLogGroup({ group }: { group: ActivityGroup }) {
-	const flat = !group.isRecordGroup && group.activities.some((a) => a.recordMeta.length > 0);
-	const [open, setOpen] = useState(false);
-
-	if (flat) {
-		return (
-			<div>
-				{group.activities.map((a) => (
-					<RunLogRow key={a.id} activity={a} />
-				))}
-			</div>
-		);
-	}
-
-	return (
-		<div>
-			<button
-				onClick={() => setOpen((o) => !o)}
-				className="flex w-full items-center gap-2 px-3 py-1.5 bg-slate-800/60 text-sm font-medium text-slate-300 hover:bg-slate-800"
-			>
-				<span className="w-2.5 text-[10px] leading-none text-slate-500">
-					{open ? "▼" : "▶"}
-				</span>
-				{group.isRecordGroup && <StatusDot ok={group.errorCount === 0} />}
-				<span className="truncate">{group.name}</span>
-				<span className="ml-auto flex items-center gap-2 text-slate-500">
-					{group.errorCount > 0 && (
-						<span className="text-red-400">{group.errorCount} err</span>
-					)}
-					<span>
-						{group.activities.length}{" "}
-						{group.activities.length === 1 ? "step" : "steps"}
-					</span>
-				</span>
-			</button>
-			{open &&
-				group.activities.map((a) => <RunLogRow key={a.id} activity={a} />)}
-		</div>
-	);
-}
-
-/** Compact read-only render of a saved run's parsed data — the "smaller log screen". */
-function RunLogPreview({ data }: { data: DashboardData }) {
-	if (data.runs.length === 0) {
-		return <p className="text-sm text-slate-400">No activities in this run.</p>;
-	}
-	return (
-		<div className="space-y-4">
-			{data.runs.map((run) => (
-				<div
-					key={run.id}
-					className="rounded-lg border border-slate-700/50 bg-slate-800/40 overflow-hidden"
-				>
-					<div className="flex items-center gap-2 px-3 py-2 border-b border-slate-700/40">
-						<StatusDot ok={run.errorCount === 0} />
-						<span className="font-semibold text-slate-200 truncate">{run.name}</span>
-						<span className="ml-auto shrink-0 text-xs text-slate-400">
-							{run.records} records · {run.errorCount} errors ·{" "}
-							{fmtDuration(run.startMs, run.endMs)}
-						</span>
-					</div>
-					<div>
-						{run.groups
-							.filter((g) => g.activityType !== "ForEach")
-							.map((g) => (
-								<RunLogGroup key={g.name} group={g} />
-							))}
-					</div>
-				</div>
-			))}
-		</div>
-	);
-}
-
-const SAVED_RUNS_MODAL = "saved-runs-modal";
-
-/** "View saved runs" button + MicroModal. Lists all captured runs (filterable by
- *  pipeline or date); clicking one splits into a 25% run rail + 75% log preview. */
-function SavedRunsMenu() {
-	const [logs, setLogs] = useState<SavedLog[] | null>(null);
-	const [filterPipe, setFilterPipe] = useState("");
-	const [filterDate, setFilterDate] = useState("");
-	const [selected, setSelected] = useState<{ path: string; data: DashboardData } | null>(null);
-	const [loadingSel, setLoadingSel] = useState(false);
-	// React owns visibility (via the is-open class) so it can't fight MicroModal's
-	// imperative toggling; MicroModal is kept only for focus trap + scroll lock + ESC.
-	const [isOpen, setIsOpen] = useState(false);
-
-	const closeModal = () => {
-		setIsOpen(false);
-		setSelected(null);
-		try {
-			MicroModal.close(SAVED_RUNS_MODAL);
-		} catch {
-			/* wasn't opened through MicroModal */
-		}
-	};
-
-	const openModal = () => {
-		setLogs(null);
-		setSelected(null);
-		setFilterPipe("");
-		setFilterDate("");
-		setIsOpen(true);
-		listSavedLogs()
-			.then(setLogs)
-			.catch(() => setLogs([]));
-	};
-
-	// Hand off to MicroModal for focus trap + scroll lock + ESC once React has
-	// rendered the (now visible) modal element. React still owns display via `hidden`.
-	useEffect(() => {
-		if (!isOpen) return;
-		try {
-			MicroModal.show(SAVED_RUNS_MODAL, {
-				disableScroll: true,
-				onClose: () => {
-					setIsOpen(false);
-					setSelected(null);
-				},
-			});
-		} catch {
-			/* a11y niceties unavailable; modal still works via React */
-		}
-	}, [isOpen]);
-
-	const pick = async (path: string) => {
-		setLoadingSel(true);
-		setSelected({ path, data: { runs: [] } as unknown as DashboardData });
-		try {
-			const res = await loadRunLog(path);
-			if ("data" in res) setSelected({ path, data: res.data });
-			else setSelected(null);
-		} finally {
-			setLoadingSel(false);
-		}
-	};
-
-	const all = logs ?? [];
-	const pipelines = [...new Set(all.map((l) => l.pipeline))].sort();
-	const filtered = all.filter(
-		(l) =>
-			(!filterPipe || l.pipeline === filterPipe) &&
-			(!filterDate || l.date === filterDate),
-	);
-
-	// Group filtered runs by pipeline, preserving newest-first order.
-	const groups: [string, SavedLog[]][] = [];
-	const byPipe = new Map<string, SavedLog[]>();
-	for (const l of filtered) {
-		let g = byPipe.get(l.pipeline);
-		if (!g) {
-			g = [];
-			byPipe.set(l.pipeline, g);
-			groups.push([l.pipeline, g]);
-		}
-		g.push(l);
-	}
-
-	const runList = (
-		<div className="h-full overflow-y-auto">
-			{logs === null ? (
-				<p className="px-4 py-3 text-sm text-slate-400">Loading…</p>
-			) : groups.length === 0 ? (
-				<p className="px-4 py-3 text-sm text-slate-400">
-					No saved runs.
-				</p>
-			) : (
-				groups.map(([pipe, items]) => (
-					<div
-						key={pipe}
-						className="border-b border-slate-800 last:border-0"
-					>
-						<div className="sticky top-0 bg-slate-900/95 px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
-							{pipe}
-						</div>
-						{items.map((l) => (
-							<button
-								key={l.path}
-								onClick={() => pick(l.path)}
-								className={`block w-full px-4 py-2 text-left text-sm hover:bg-slate-800 ${
-									selected?.path === l.path
-										? "bg-slate-800 text-sky-300"
-										: "text-slate-200"
-								}`}
-							>
-								{fmtDay(l.date)} · {fmt12h(l.time)}
-							</button>
-						))}
-					</div>
-				))
-			)}
-		</div>
-	);
-
-	return (
-		<>
-			<button
-				onClick={openModal}
-				className="ml-1 rounded-md border border-slate-600/60 bg-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-700 cursor-pointer"
-			>
-				View saved runs
-			</button>
-
-			<div
-				className={`modal ${isOpen ? "" : "hidden"}`}
-				id={SAVED_RUNS_MODAL}
-				aria-hidden={!isOpen}
-			>
-				<div
-					className="modal__overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-					tabIndex={-1}
-					onClick={(e) => {
-						if (e.target === e.currentTarget) closeModal();
-					}}
-				>
-					<div
-						className="modal__container flex h-[82vh] w-[92vw] max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl"
-						role="dialog"
-						aria-modal="true"
-						aria-labelledby="saved-runs-title"
-					>
-						<div className="flex items-center gap-3 border-b border-slate-700 px-4 py-3">
-							<h2
-								id="saved-runs-title"
-								className="text-base font-semibold text-slate-100"
-							>
-								Saved runs
-							</h2>
-							<div className="ml-auto flex items-center gap-2">
-								<select
-									value={filterPipe}
-									onChange={(e) => setFilterPipe(e.target.value)}
-									className="rounded-md border border-slate-600/60 bg-slate-800 px-2.5 py-1 text-xs text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500/40 cursor-pointer"
-								>
-									<option value="">All pipelines</option>
-									{pipelines.map((p) => (
-										<option key={p} value={p}>
-											{p}
-										</option>
-									))}
-								</select>
-								<input
-									type="date"
-									value={filterDate}
-									onChange={(e) => setFilterDate(e.target.value)}
-									aria-label="Filter by date"
-									className="rounded-md border border-slate-600/60 bg-slate-800 px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500/40 [color-scheme:dark]"
-								/>
-								{filterDate && (
-									<button
-										onClick={() => setFilterDate("")}
-										aria-label="Clear date filter"
-										className="rounded-md px-2 py-1 text-xs text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-									>
-										Clear
-									</button>
-								)}
-								<button
-									onClick={closeModal}
-									aria-label="Close"
-									className="rounded-md px-2 py-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-								>
-									✕
-								</button>
-							</div>
-						</div>
-
-						<div className="flex min-h-0 flex-1">
-							{selected ? (
-								<>
-									<div className="w-1/4 min-w-45 border-r border-slate-700">
-										{runList}
-									</div>
-									<div className="w-3/4 overflow-y-auto p-4">
-										{loadingSel ? (
-											<p className="text-sm text-slate-400">Loading…</p>
-										) : (
-											<RunLogPreview data={selected.data} />
-										)}
-									</div>
-								</>
-							) : (
-								<div className="flex-1">{runList}</div>
-							)}
-						</div>
-					</div>
-				</div>
-			</div>
-		</>
-	);
-}
-
-function StatusPill({ ok, label }: { ok: boolean; label: string }) {
-	return (
-		<span
-			className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${
-				ok
-					? "bg-emerald-500/10 text-emerald-400 ring-emerald-500/20"
-					: "bg-red-500/10 text-red-400 ring-red-500/20"
-			}`}
-		>
-			<StatusDot ok={ok} />
-			{label}
-		</span>
-	);
-}
-
-function HttpStatusPill({ code }: { code: string }) {
-	const ok = code.startsWith("2");
-	return (
-		<span
-			className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-semibold font-mono ring-1 ring-inset ${
-				ok
-					? "bg-emerald-500/15 text-emerald-400 ring-emerald-500/20"
-					: "bg-red-500/15 text-red-400 ring-red-500/20"
-			}`}
-		>
-			HTTP {code}
-		</span>
-	);
-}
-
-/** Draggable divider between panels; reports cumulative pointer delta while dragging */
-function DragHandle({
-	orientation,
-	onStart,
-	onDelta,
-}: {
-	orientation: "col" | "row";
-	onStart: () => void;
-	onDelta: (delta: number) => void;
-}) {
-	const isRow = orientation === "row";
-	return (
-		<div
-			onPointerDown={(e) => {
-				e.preventDefault();
-				onStart();
-				const startPos = isRow ? e.clientY : e.clientX;
-				const move = (ev: PointerEvent) =>
-					onDelta((isRow ? ev.clientY : ev.clientX) - startPos);
-				const up = () =>
-					window.removeEventListener("pointermove", move);
-				window.addEventListener("pointermove", move);
-				window.addEventListener("pointerup", up, { once: true });
-			}}
-			className={`group shrink-0 flex items-center justify-center ${
-				isRow ? "h-3 cursor-row-resize" : "w-3 cursor-col-resize"
-			}`}
-		>
-			<div
-				className={`rounded-full bg-slate-700/60 transition-colors group-hover:bg-blue-500 ${
-					isRow ? "h-0.5 w-16" : "w-0.5 h-16"
-				}`}
-			/>
-		</div>
-	);
-}
-
-const SQL_KEYWORDS = new Set(
-	(
-		"select from where insert into values update set delete create table drop " +
-		"if exists not null and or as join inner left right outer on group by order " +
-		"having union all distinct case when then else end begin declare is in like " +
-		"top with primary key constraint default identity truncate alter add cast " +
-		"convert isnull coalesce between go int bigint varchar nvarchar datetime " +
-		"decimal float bit char text date getdate count sum min max avg row_number over partition"
-	).split(" "),
-);
-
-const SQL_TOKEN_RE =
-	/(--[^\n]*|\/\*[\s\S]*?\*\/)|('(?:[^']|'')*')|(\b\d+(?:\.\d+)?\b)|(\[[^\]]*\]|\b[a-zA-Z_][\w$#@]*\b)|([\s\S])/g;
-
-/** Lightweight SQL syntax highlighting — keywords, strings, numbers, comments */
-function SqlView({ sql }: { sql: string }) {
-	const nodes: React.ReactNode[] = [];
-	let plain = "";
-	let key = 0;
-	const flush = () => {
-		if (plain) {
-			nodes.push(plain);
-			plain = "";
-		}
-	};
-	for (const m of sql.matchAll(SQL_TOKEN_RE)) {
-		const [, comment, str, num, ident] = m;
-		if (comment) {
-			flush();
-			nodes.push(
-				<span key={key++} className="text-slate-500 italic">
-					{comment}
-				</span>,
-			);
-		} else if (str) {
-			flush();
-			nodes.push(
-				<span key={key++} className="text-amber-300/90">
-					{str}
-				</span>,
-			);
-		} else if (num) {
-			flush();
-			nodes.push(
-				<span key={key++} className="text-cyan-300">
-					{num}
-				</span>,
-			);
-		} else if (ident && SQL_KEYWORDS.has(ident.toLowerCase())) {
-			flush();
-			nodes.push(
-				<span key={key++} className="text-blue-400 font-medium">
-					{ident}
-				</span>,
-			);
-		} else {
-			plain += m[0];
-		}
-	}
-	flush();
-	return (
-		<pre className="flex-1 overflow-auto px-4 py-3 text-xs font-mono text-slate-200 whitespace-pre-wrap">
-			{nodes}
-		</pre>
-	);
-}
-
-const card =
-	"bg-slate-800/40 rounded-2xl border border-slate-700/40 shadow-xl shadow-black/20 backdrop-blur-sm";
-
-/** Centered placeholder shown in a panel before a record is selected */
-function EmptyHint({ label }: { label: string }) {
-	return (
-		<div className="flex h-full flex-col items-center justify-center gap-2 px-4 py-8 text-center text-slate-500">
-			<svg
-				xmlns="http://www.w3.org/2000/svg"
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke="currentColor"
-				strokeWidth="1.5"
-				className="h-7 w-7 opacity-30"
-			>
-				<path d="M4 6h16M4 12h10M4 18h7" />
-			</svg>
-			<p className="text-xs">{label}</p>
-		</div>
-	);
-}
-
-/** Collapsed panels shrink to a slim rail with a vertical label */
-function CollapsedRail({
-	title,
-	onExpand,
-}: {
-	title: string;
-	onExpand: () => void;
-}) {
-	return (
-		<div
-			className={`w-10 shrink-0 flex flex-col items-center py-2.5 gap-3 min-h-0 ${card}`}
-		>
-			<button
-				onClick={onExpand}
-				title={`Expand ${title}`}
-				className="text-slate-400 hover:text-slate-200 text-xs leading-none"
-			>
-				⤢
-			</button>
-			<span className="[writing-mode:vertical-rl] text-[11px] font-semibold uppercase tracking-wider text-slate-300">
-				{title}
-			</span>
-		</div>
-	);
-}
-
-function PanelTitle({
-	title,
-	onCollapse,
-	children,
-}: {
-	title: string;
-	onCollapse?: () => void;
-	children?: React.ReactNode;
-}) {
-	return (
-		<div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-700/40">
-			<span className="h-3.5 w-1 rounded-full bg-linear-to-b from-sky-400 to-indigo-500" />
-			<span className="text-[11px] font-semibold uppercase tracking-wider text-slate-200">
-				{title}
-			</span>
-			{children}
-			{onCollapse && (
-				<button
-					onClick={onCollapse}
-					title={`Collapse ${title}`}
-					className="ml-auto text-slate-500 hover:text-slate-200 text-xs leading-none px-1"
-				>
-					—
-				</button>
-			)}
-		</div>
-	);
-}
+	card,
+	CollapsedRail,
+	DragHandle,
+	EmptyHint,
+	HttpStatusPill,
+	PanelTitle,
+	resultRows,
+	ResultTable,
+	SqlView,
+	StatusDot,
+	StatusPill,
+} from "@/components/ui";
+import { RunNowButton } from "@/components/saved-runs";
+import { DayPicker, IntegrationList } from "@/components/dashboard-panels";
 
 export default function Dashboard({
 	data: initialData,
@@ -832,7 +124,7 @@ export default function Dashboard({
 	const [sidebarWidth, setSidebarWidth] = useState(320);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 	const [inspectorHeight, setInspectorHeight] = useState(300);
-	
+
 	const [panelPct, setPanelPct] = useState({
 		request: 33,
 		body: 33,
@@ -978,6 +270,8 @@ export default function Dashboard({
 	}
 
 	const fieldRows = selectedActivity ? flatten(selectedActivity.body) : [];
+	// SELECT rows (Script/Lookup) rendered as a table instead of raw output JSON.
+	const rows = selectedActivity ? resultRows(selectedActivity.output) : null;
 
 	const requestCollapsed = collapsedPanels.has("Request");
 	const bodyCollapsed = collapsedPanels.has("Body");
@@ -1078,75 +372,13 @@ export default function Dashboard({
 				</div>
 			)}
 
-			{!logView && data.availableDays.length > 0 && (
-				<nav className="flex items-center gap-1 border-b border-slate-700/40 px-4 py-1.5 overflow-x-auto shrink-0 bg-slate-900/40">
-					{(() => {
-						const recentDays = data.availableDays.slice(0, 7);
-						const olderDays = data.availableDays.slice(7);
-						const currentIsOlder =
-							data.currentDay !== null &&
-							!recentDays.includes(data.currentDay);
-						return (
-							<>
-								{currentIsOlder && (
-									<>
-										<button
-											onClick={() =>
-												switchDay(data.currentDay!)
-											}
-											className="rounded-full px-3.5 py-1.5 text-sm font-medium whitespace-nowrap bg-linear-to-r from-blue-500/20 to-indigo-500/10 text-blue-300 ring-1 ring-inset ring-blue-400/30"
-										>
-											{fmtDay(data.currentDay!)}
-										</button>
-										<div className="w-px h-4 bg-slate-700 mx-1 shrink-0" />
-									</>
-								)}
-								{recentDays.map((d) => (
-									<button
-										key={d}
-										onClick={() => switchDay(d)}
-										disabled={loadingDay !== null}
-										className={`rounded-full px-3.5 py-1.5 text-sm font-medium whitespace-nowrap transition-colors ${
-											d === data.currentDay
-												? "bg-linear-to-r from-blue-500/20 to-indigo-500/10 text-blue-300 ring-1 ring-inset ring-blue-400/30"
-												: "text-slate-400 hover:text-slate-200 hover:bg-slate-700/40"
-										} ${loadingDay === d ? "opacity-60" : ""}`}
-									>
-										{fmtDay(d)}
-									</button>
-								))}
-								{data.availableDays.length > 7 && (
-									<>
-										<div className="w-px h-4 bg-slate-700 mx-1 shrink-0" />
-										<select
-											value={
-												currentIsOlder
-													? (data.currentDay ?? "")
-													: ""
-											}
-											onChange={(e) =>
-												e.target.value &&
-												switchDay(e.target.value)
-											}
-											className="ml-1 rounded-md border border-slate-600/60 bg-slate-800 px-2.5 py-1 text-xs text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500/40 focus:border-blue-500 cursor-pointer"
-										>
-											<option value="">
-												Older logs…
-											</option>
-											{olderDays.map((d) => (
-												<option key={d} value={d}>
-													{fmtDay(d)}
-												</option>
-											))}
-										</select>
-									</>
-								)}
-							</>
-						);
-					})()}
-				<div className="w-px h-4 bg-slate-700 mx-1 shrink-0" />
-						<SavedRunsMenu />
-					</nav>
+			{!logView && (
+				<DayPicker
+					availableDays={data.availableDays}
+					currentDay={data.currentDay}
+					loadingDay={loadingDay}
+					onSwitchDay={switchDay}
+				/>
 			)}
 
 			<div className="flex flex-1 p-3 min-h-0">
@@ -1169,57 +401,11 @@ export default function Dashboard({
 								title="Integrations"
 								onCollapse={() => setSidebarCollapsed(true)}
 							/>
-							<ul className="flex-1 overflow-y-auto p-1.5 space-y-1">
-								{visibleRuns.map((run) => {
-									const selected = run.id === selectedRunId;
-									const ok =
-										run.errorCount === 0 &&
-										run.status === "Succeeded";
-									return (
-										<li key={run.id}>
-											<button
-												onClick={() => selectRun(run)}
-												className={`w-full text-left rounded-xl px-3 py-2.5 transition-colors ${
-													selected
-														? "bg-linear-to-r from-blue-500/20 to-indigo-500/10 ring-1 ring-blue-400/30 shadow-lg shadow-blue-500/10"
-														: "hover:bg-slate-700/30"
-												}`}
-											>
-												<div className="flex items-center gap-2">
-													<StatusDot ok={ok} />
-													<span className="font-medium truncate text-slate-200">
-														{run.name}
-													</span>
-													{run.errorCount > 0 && (
-														<span className="ml-auto shrink-0 rounded-full bg-red-500/10 text-red-400 px-2 py-0.5 text-xs font-semibold">
-															{run.errorCount}
-														</span>
-													)}
-												</div>
-												<div className="mt-1 text-xs text-slate-400">
-													{fmtTime(run.startMs)} –{" "}
-													{fmtTime(run.endMs)}
-												</div>
-												<div className="text-xs text-slate-400">
-													<span className="font-bold">
-														{run.records}
-													</span>{" "}
-													records ·{" "}
-													{fmtDuration(
-														run.startMs,
-														run.endMs,
-													)}
-												</div>
-											</button>
-										</li>
-									);
-								})}
-								{visibleRuns.length === 0 && (
-									<li className="px-3 py-4 text-slate-400">
-										No integrations match.
-									</li>
-								)}
-							</ul>
+							<IntegrationList
+								runs={visibleRuns}
+								selectedRunId={selectedRunId}
+								onSelect={selectRun}
+							/>
 						</aside>
 						<DragHandle
 							orientation="col"
@@ -1345,7 +531,10 @@ export default function Dashboard({
 								</div>
 							)}
 						</PanelTitle>
-						<div ref={activityLogRef} className="flex-1 overflow-y-auto">
+						<div
+							ref={activityLogRef}
+							className="flex-1 overflow-y-auto"
+						>
 							{selectedRun?.groups.map((group) => {
 								const list = visibleActivities(group);
 								if (
@@ -1854,8 +1043,16 @@ export default function Dashboard({
 													}
 												/>
 											)}
-											{selectedActivity.metrics.map(
-												([k, v]) => (
+											{selectedActivity.metrics
+												.filter(
+													([k]) =>
+														!rows ||
+														(k !==
+															"resultSetCount" &&
+															k !==
+																"recordsAffected"),
+												)
+												.map(([k, v]) => (
 													<span
 														key={k}
 														className="rounded-full bg-slate-700/60 px-2.5 py-0.5 text-xs text-slate-300"
@@ -1865,8 +1062,7 @@ export default function Dashboard({
 															{v}
 														</b>
 													</span>
-												),
-											)}
+												))}
 										</div>
 										{selectedActivity.errorMessages.length >
 											0 && (
@@ -1883,18 +1079,21 @@ export default function Dashboard({
 												)}
 											</ul>
 										)}
-										{selectedActivity.outputRaw && (
+										{rows ? (
+											<ResultTable rows={rows} />
+										) : !selectedActivity.sql &&
+										  selectedActivity.outputRaw ? (
 											<pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap">
 												{selectedActivity.outputRaw}
 											</pre>
-										)}
-										{!selectedActivity.outputRaw &&
+										) : (
 											selectedActivity.errorMessages
 												.length === 0 && (
 												<p className="text-xs text-slate-400">
 													No response payload.
 												</p>
-											)}
+											)
+										)}
 									</div>
 								) : (
 									<EmptyHint label="Select a record to view its response." />
