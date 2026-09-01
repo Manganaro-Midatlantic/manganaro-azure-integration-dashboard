@@ -117,6 +117,15 @@ export default function Dashboard({
 	}, []);
 
 	const [errorsOnly, setErrorsOnly] = useState(false);
+	const [theme, setTheme] = useState<"dark" | "light">(() =>
+		typeof window !== "undefined" && localStorage.getItem("theme") === "light"
+			? "light"
+			: "dark",
+	);
+	useEffect(() => {
+		document.documentElement.classList.toggle("light", theme === "light");
+		localStorage.setItem("theme", theme);
+	}, [theme]);
 	const [search, setSearch] = useState("");
 	const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
 
@@ -317,6 +326,24 @@ export default function Dashboard({
 					>
 						Errors only
 					</button>
+					<div className="relative inline-flex shrink-0">
+						<input
+							type="checkbox"
+							id="dn-toggle"
+							className="dn-toggle-checkbox"
+							checked={theme === "dark"}
+							onChange={() =>
+								setTheme((t) => (t === "dark" ? "light" : "dark"))
+							}
+						/>
+						<label
+							htmlFor="dn-toggle"
+							className="dn-toggle-label"
+							title="Toggle light/dark mode"
+						>
+							<span className="dn-toggle-label-background" />
+						</label>
+					</div>
 					<div className="flex items-center gap-2 pl-3 ml-1 border-l border-slate-700/40">
 						<span className="inline-flex items-center gap-1.5 rounded-full bg-slate-700/40 px-3 py-1 text-xs ring-1 ring-inset ring-slate-600/40">
 							<span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
@@ -461,7 +488,9 @@ export default function Dashboard({
 									[
 										"Errors",
 										selectedRun.errorCount,
-										"from-rose-500/25 to-orange-500/10 border-rose-400/20",
+										selectedRun.errorCount > 0
+											? "from-rose-500/25 to-orange-500/10 border-rose-400/20"
+											: "from-slate-700/25 to-slate-800/10 border-slate-600/20",
 										selectedRun.errorCount > 0
 											? "text-rose-200"
 											: "text-slate-300",

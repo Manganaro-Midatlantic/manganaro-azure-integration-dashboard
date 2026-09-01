@@ -15,6 +15,7 @@ import {
 import { StatusDot } from "./ui";
 
 const TERMINAL = new Set(["Succeeded", "Failed", "Cancelled"]);
+const RESUME_TTL_MS = 30 * 60 * 1000; // 30 min — long enough to survive a refresh mid-run
 
 export function RunNowButton({
 	pipeline,
@@ -79,21 +80,35 @@ export function RunNowButton({
 	}, [runId]);
 
 	// On mount/refresh, resume the pipeline's last run from storage: fetch its
-	// status and show it, resuming live polling if it's still running.
+	// status and show it, resuming live polling if it's still running. Uses
+	// sessionStorage (not localStorage) so a "✓ Succeeded" from an old tab can't
+	// resurface in a new browser session/day, plus a TTL so it doesn't linger
+	// indefinitely even within one very long-lived session.
 	useEffect(() => {
 		const key = `runId:${pipeline}`;
-		const stored = localStorage.getItem(key);
-		if (!stored) return;
+		const raw = sessionStorage.getItem(key);
+		if (!raw) return;
+		let stored: { runId: string; ts: number };
+		try {
+			stored = JSON.parse(raw);
+		} catch {
+			sessionStorage.removeItem(key);
+			return;
+		}
+		if (Date.now() - stored.ts > RESUME_TTL_MS) {
+			sessionStorage.removeItem(key); // stale — don't resurrect an old result
+			return;
+		}
 		let alive = true;
-		getRunStatus(stored).then((res) => {
+		getRunStatus(stored.runId).then((res) => {
 			if (!alive) return;
 			if (res.error || !res.status) {
-				localStorage.removeItem(key); // stale/unknown run
+				sessionStorage.removeItem(key); // stale/unknown run
 				setStatus(null);
 				return;
 			}
 			setStatus(res.status);
-			setRunId(stored); // resumes polling if running; enables View logs if done
+			setRunId(stored.runId); // resumes polling if running; enables View logs if done
 		});
 		return () => {
 			alive = false;
@@ -119,7 +134,10 @@ export function RunNowButton({
 				throw new Error(data.error ?? "Trigger failed");
 			setStatus("Queued");
 			setRunId(data.runId); // kicks off the polling effect
-			localStorage.setItem(`runId:${pipeline}`, data.runId); // survive refresh
+			sessionStorage.setItem(
+				`runId:${pipeline}`,
+				JSON.stringify({ runId: data.runId, ts: Date.now() }),
+			); // survive refresh, within this session only
 		} catch (e) {
 			setStatus("Failed");
 			setError(e instanceof Error ? e.message : "Trigger failed");

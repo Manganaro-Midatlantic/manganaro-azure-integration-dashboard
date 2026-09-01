@@ -92,10 +92,10 @@ export function IntegrationList({
 					<li key={run.id}>
 						<button
 							onClick={() => onSelect(run)}
-							className={`w-full text-left rounded-xl px-3 py-2.5 transition-colors ${
+							className={`w-full text-left rounded-xl border-l-4 px-3 py-2.5 transition-colors ${
 								selected
-									? "bg-linear-to-r from-blue-500/20 to-indigo-500/10 ring-1 ring-blue-400/30 shadow-lg shadow-blue-500/10"
-									: "hover:bg-slate-700/30"
+									? "border-blue-400 bg-linear-to-r from-blue-500/20 to-indigo-500/10 shadow-lg shadow-blue-500/10"
+									: "border-transparent hover:bg-slate-700/30"
 							}`}
 						>
 							<div className="flex items-center gap-2">

@@ -263,6 +263,7 @@ const RECORD_META_RULES: Record<string, MetaRule[]> = {
     { label: "Name: ", from: (b) => asText(b.name) },
   ],
   "POST cost_code": [
+    { label: "Job Number: ", from: (b) => asText(b.job_number) },
     { label: "Code: ", from: (b) => asText(b.code) },
     { label: "Description: ", from: (b) => asText(b.description) },
   ],

@@ -23,6 +23,23 @@ html {
   font-size: 18px;
 }
 
+/* ponytail: whole app is hand-styled dark (slate-*) with no light variants.
+   Re-theming every class is out of scope for a toggle; invert+hue-rotate
+   flips dark<->light in one shot, un-inverted on media so logos/icons stay
+   true-color. Upgrade to real light tokens if colors ever look off. */
+html.light {
+  color-scheme: light;
+}
+html.light body {
+  filter: invert(1) hue-rotate(180deg);
+}
+html.light img,
+html.light svg,
+html.light video,
+html.light .dn-toggle-label {
+  filter: invert(1) hue-rotate(180deg);
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
@@ -66,4 +83,160 @@ code,
 }
 *::-webkit-scrollbar-thumb:hover {
   background: rgb(100 116 139 / 0.7);
+}
+
+/* Day/night toggle switch — ported from
+   daily-dev-tips.com/posts/creating-day-night-css-only-toggle-switch,
+   scaled ~0.36x to sit in the header. The page-wide ".background" swap from
+   the original is dropped: this app already themes its own background. */
+:root {
+  --dn-blue-color: #96dcee;
+  --dn-blue-border: #72cce3;
+  --dn-yellow-background: #fffaa8;
+  --dn-yellow-border: #f5eb71;
+  --dn-indigo-color: #6b7abb;
+  --dn-indigo-border: #5d6baa;
+  --dn-gray-border: #e8e8ea;
+  --dn-gray-dots: #e8e8ea;
+}
+
+.dn-toggle-checkbox {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.dn-toggle-checkbox:focus-visible + .dn-toggle-label {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+.dn-toggle-label {
+  width: 72px;
+  height: 36px;
+  background: var(--dn-blue-color);
+  border: 2px solid var(--dn-blue-border);
+  border-radius: 36px;
+  display: flex;
+  position: relative;
+  cursor: pointer;
+  transition: background 350ms ease-in, border-color 350ms ease-in;
+}
+
+.dn-toggle-label:before {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 37px;
+  width: 30px;
+  height: 30px;
+  border: 2px solid var(--dn-yellow-border);
+  border-radius: 30px;
+  background: var(--dn-yellow-background);
+  transition: background 350ms ease-in, border-color 350ms ease-in;
+  animation: dn-reverse 350ms forwards;
+}
+@keyframes dn-reverse {
+  0% {
+    left: 37px;
+    width: 30px;
+  }
+  60% {
+    left: 26px;
+    width: 40px;
+  }
+  100% {
+    left: 1px;
+  }
+}
+
+.dn-toggle-label:after {
+  content: "";
+  position: absolute;
+  left: 51px;
+  top: 8px;
+  width: 3px;
+  height: 3px;
+  background: transparent;
+  border-radius: 50%;
+  box-shadow:
+    var(--dn-gray-dots) -4.5px 0 0 0.7px,
+    var(--dn-gray-dots) -8.5px 5px 0 -0.7px;
+  opacity: 0;
+  transition: opacity 250ms ease-in;
+}
+
+.dn-toggle-label-background {
+  position: relative;
+  left: 48.5px;
+  top: 16px;
+  width: 3.5px;
+  height: 2px;
+  border-radius: 2px;
+  background: #fff;
+  transition: all 150ms ease-in;
+}
+.dn-toggle-label-background:before,
+.dn-toggle-label-background:after {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 2px;
+  border-radius: 2px;
+  background: #fff;
+  transition: all 150ms ease-in;
+}
+.dn-toggle-label-background:before {
+  top: -2px;
+  left: -7px;
+}
+.dn-toggle-label-background:after {
+  top: 2px;
+  left: -3.5px;
+}
+
+.dn-toggle-checkbox:checked + .dn-toggle-label {
+  background: var(--dn-indigo-color);
+  border-color: var(--dn-indigo-border);
+}
+.dn-toggle-checkbox:checked + .dn-toggle-label:before {
+  background: #fff;
+  border-color: var(--dn-gray-border);
+  animation: dn-switch 350ms forwards;
+}
+@keyframes dn-switch {
+  0% {
+    left: 1px;
+  }
+  60% {
+    left: 1px;
+    width: 40px;
+  }
+  100% {
+    left: 37px;
+    width: 30px;
+  }
+}
+.dn-toggle-checkbox:checked + .dn-toggle-label:after {
+  transition-delay: 350ms;
+  opacity: 1;
+}
+.dn-toggle-checkbox:checked + .dn-toggle-label .dn-toggle-label-background {
+  left: 21.5px;
+  width: 2px;
+}
+.dn-toggle-checkbox:checked
+  + .dn-toggle-label
+  .dn-toggle-label-background:before {
+  width: 2px;
+  height: 2px;
+  top: -9px;
+}
+.dn-toggle-checkbox:checked
+  + .dn-toggle-label
+  .dn-toggle-label-background:after {
+  width: 2px;
+  height: 2px;
+  left: -10.5px;
+  top: 7px;
 }
