@@ -1,7 +1,13 @@
 "use server";
 
 import { factoryUrl, getToken, isAdfConfigured } from "@/lib/adf";
-import { isBlobConfigured, listRunLogs, loadBlobText } from "@/lib/blob";
+import {
+  isBlobConfigured,
+  listRunLogs,
+  loadBlobText,
+  loadResolvedFlags,
+  setResolvedFlag,
+} from "@/lib/blob";
 import { captureRunLog, RUN_ID } from "@/lib/capture";
 import { parseDashboardData } from "@/lib/data";
 import type { DashboardData } from "@/lib/types";
@@ -105,5 +111,36 @@ export async function loadRunLog(path: string): Promise<LogResult> {
     return { data: parseDashboardData(csv, path, [], null), path };
   } catch {
     return { error: "Log not found" };
+  }
+}
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Which of a day's integrations are marked resolved, keyed by IntegrationRun id. */
+export async function getResolvedFlags(day: string): Promise<Record<string, boolean>> {
+  if (!isBlobConfigured() || !DAY.test(day)) return {};
+  try {
+    return await loadResolvedFlags(day);
+  } catch (e) {
+    console.error("[getResolvedFlags] failed:", e);
+    return {};
+  }
+}
+
+/** Mark (or unmark) one integration resolved for a day. */
+export async function setResolved(
+  day: string,
+  runId: string,
+  resolved: boolean,
+): Promise<{ ok: true } | { error: string }> {
+  if (!isBlobConfigured()) return { error: "Blob storage not configured" };
+  if (!DAY.test(day)) return { error: "Invalid day" };
+  if (!runId) return { error: "Missing runId" };
+  try {
+    await setResolvedFlag(day, runId, resolved);
+    return { ok: true };
+  } catch (e) {
+    console.error("[setResolved] failed:", e);
+    return { error: e instanceof Error ? e.message : "Failed to save" };
   }
 }

@@ -86,15 +86,47 @@ export async function loadBlobText(name: string): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** Write a CSV blob (e.g. "MyPipeline/2026-06-30_0802.csv") using the service
- *  principal — needs the "Storage Blob Data Contributor" role on the account. */
-export async function uploadCsv(blobName: string, text: string): Promise<void> {
+/** Write a text blob using the service principal — needs the "Storage Blob Data
+ *  Contributor" role on the account. Overwrites any existing blob at that name. */
+async function uploadText(blobName: string, text: string, contentType: string): Promise<void> {
   const client = new BlobServiceClient(
     `https://${account}.blob.core.windows.net`,
     storageCredential(),
   );
   const blob = client.getContainerClient(CONTAINER).getBlockBlobClient(blobName);
   await blob.upload(text, Buffer.byteLength(text), {
-    blobHTTPHeaders: { blobContentType: "text/csv" },
+    blobHTTPHeaders: { blobContentType: contentType },
   });
+}
+
+/** Write a CSV blob (e.g. "MyPipeline/2026-06-30_0802.csv"). */
+export async function uploadCsv(blobName: string, text: string): Promise<void> {
+  return uploadText(blobName, text, "text/csv");
+}
+
+/** Resolved-flag sidecar for a day, keyed by IntegrationRun id (e.g. "run0"). Kept
+ *  separate from the day's CSV so the CSV can stay immutable/cache-forever while
+ *  this mutates freely. */
+const resolvedBlobName = (day: string) => `${day}.resolved.json`;
+
+/** Which of a day's integrations have been marked resolved. Empty when none yet. */
+export async function loadResolvedFlags(day: string): Promise<Record<string, boolean>> {
+  try {
+    return JSON.parse(await loadBlobText(resolvedBlobName(day)));
+  } catch (e) {
+    if ((e as { statusCode?: number }).statusCode === 404) return {};
+    throw e;
+  }
+}
+
+/** Mark (or unmark) one integration resolved for a day, persisted to blob. */
+export async function setResolvedFlag(
+  day: string,
+  runId: string,
+  resolved: boolean,
+): Promise<void> {
+  const flags = await loadResolvedFlags(day);
+  if (resolved) flags[runId] = true;
+  else delete flags[runId];
+  await uploadText(resolvedBlobName(day), JSON.stringify(flags), "application/json");
 }

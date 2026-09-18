@@ -24,6 +24,7 @@ import {
 } from "@/components/ui";
 import { RunNowButton } from "@/components/saved-runs";
 import { DayPicker, IntegrationList } from "@/components/dashboard-panels";
+import { getResolvedFlags, setResolved } from "@/app/actions";
 
 export default function Dashboard({
 	data: initialData,
@@ -86,6 +87,36 @@ export default function Dashboard({
 	);
 	const [selectedActivityId, setSelectedActivityId] = useState<string | null>(
 		null,
+	);
+
+	// Persisted per-day, per-integration "resolved" marker for runs with errors.
+	const [resolvedFlags, setResolvedFlags] = useState<Record<string, boolean>>(
+		{},
+	);
+	useEffect(() => {
+		const day = data.currentDay;
+		let alive = true;
+		(day ? getResolvedFlags(day) : Promise.resolve({})).then((flags) => {
+			if (alive) setResolvedFlags(flags);
+		});
+		return () => {
+			alive = false;
+		};
+	}, [data.currentDay]);
+
+	const toggleResolved = useCallback(
+		(runId: string) => {
+			const day = data.currentDay;
+			if (!day) return;
+			const next = !resolvedFlags[runId];
+			setResolvedFlags((prev) => ({ ...prev, [runId]: next }));
+			setResolved(day, runId, next).then((res) => {
+				if ("error" in res) {
+					setResolvedFlags((prev) => ({ ...prev, [runId]: !next }));
+				}
+			});
+		},
+		[data.currentDay, resolvedFlags],
 	);
 
 	// When viewing a captured run log, remember the view to return to.
@@ -470,6 +501,23 @@ export default function Dashboard({
 									pipeline={selectedRun.childPipeline}
 									onShowLog={showRunLog}
 								/>
+							)}
+							{selectedRun.errorCount > 0 && data.currentDay && (
+								<label
+									className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-semibold shadow-sm cursor-pointer ${
+										resolvedFlags[selectedRun.id]
+											? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30"
+											: "bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30"
+									}`}
+								>
+									<input
+										type="checkbox"
+										checked={resolvedFlags[selectedRun.id] ?? false}
+										onChange={() => toggleResolved(selectedRun.id)}
+										className="h-4 w-4 accent-emerald-500"
+									/>
+									Resolved?
+								</label>
 							)}
 							<div className="ml-auto flex items-center gap-2.5">
 								{[
